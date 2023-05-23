@@ -47,17 +47,33 @@ func visitFile(node *ast.File, fset *token.FileSet) string {
 	locationString := computeLocation(fset, node.FileStart, node.FileEnd)
 
 	packageName := node.Name.Name
-	return fmt.Sprintf("file(\"%s\", [%s], [%s], %s)", packageName, declString, importString, locationString)
+	return fmt.Sprintf("file(\"%s\", [%s], [%s], at=%s)", packageName, declString, importString, locationString)
 }
 
 func visitDeclaration(node *ast.Decl, fset *token.FileSet) string {
-	//locationString := computeLocation(fset, node.FileStart, node.FileEnd)
-	return ""
+	switch d := (*node).(type) {
+	case *ast.GenDecl:
+		return visitGeneralDeclaration(d, fset)
+	case *ast.FuncDecl:
+		return visitFunctionDeclaration(d, fset)
+	default:
+		return "" // This is an error, should panic here
+	}
+}
+
+func visitGeneralDeclaration(node *ast.GenDecl, fset *token.FileSet) string {
+	locationString := computeLocation(fset, node.Pos(), node.End())
+	return fmt.Sprintf("placeholderDecl(at=%s)", locationString)
+}
+
+func visitFunctionDeclaration(node *ast.FuncDecl, fset *token.FileSet) string {
+	locationString := computeLocation(fset, node.Pos(), node.End())
+	return fmt.Sprintf("placeholderDecl(at=%s)", locationString)
 }
 
 func visitImportSpec(node *ast.ImportSpec, fset *token.FileSet) string {
-	//locationString := computeLocation(fset, node.FileStart, node.FileEnd)
-	return ""
+	locationString := computeLocation(fset, node.Pos(), node.End())
+	return fmt.Sprintf("placeholderImportSpec(at=%s)", locationString)
 }
 
 func main() {
@@ -67,7 +83,7 @@ func main() {
 	flag.Parse()
 
 	if filePath != "" {
-		fmt.Printf("Processing file %s\n", filePath)
+		//fmt.Printf("Processing file %s\n", filePath)
 		fmt.Println(processFile(filePath))
 	} else {
 		fmt.Println("No file given")
