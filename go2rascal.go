@@ -83,9 +83,9 @@ func visitGeneralDeclaration(node *ast.GenDecl, fset *token.FileSet, addLocs boo
 func visitFunctionDeclaration(node *ast.FuncDecl, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("placeholderDecl(at=%s), %s", locationString, vistFunctionBody(node.Body, fset, addLocs))
+		return fmt.Sprintf("data function = (name=%s, at=%s), %s", node.Name, locationString, visitFunctionBody(node.Body, fset, addLocs))
 	} else {
-		return fmt.Sprintf("placeholderDecl(), %s", vistFunctionBody(node.Body, fset, addLocs))
+		return fmt.Sprintf("data function = (name=%s), %s", node.Name, visitFunctionBody(node.Body, fset, addLocs))
 	}
 }
 
@@ -95,16 +95,16 @@ func visitFunctionDeclaration(node *ast.FuncDecl, fset *token.FileSet, addLocs b
 func visitImportSpec(node *ast.ImportSpec, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("placeholderImportSpec(at=%s)", locationString)
+		return fmt.Sprintf("data import = (name=%s, at=%s), ", node.Name, locationString)
 	} else {
-		return fmt.Sprintf("placeholderImportSpec()")
+		return fmt.Sprintf("data import = (name=%s), ", node.Name)
 	}
 }
 
 // end of imports.
 // ----------------------------------------------------------------------------------------------------------------------------
 
-func vistFunctionBody(node *ast.BlockStmt, fset *token.FileSet, addLocs bool) string {
+func visitFunctionBody(node *ast.BlockStmt, fset *token.FileSet, addLocs bool) string {
 	locationString := computeLocation(fset, node.Pos(), node.End())
 	var stmts []string
 	for i := 0; i < len(node.List); i++ {
@@ -225,38 +225,41 @@ func visitIncDecStmt(node *ast.IncDecStmt, fset *token.FileSet, addLocs bool) st
 }
 
 func visitAssignStmt(node *ast.AssignStmt, fset *token.FileSet, addLocs bool) string {
+	right := visitExprList(node.Rhs, fset, addLocs)
+	left := visitExprList(node.Rhs, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("placeholderAssignStmt(at=%s)", locationString)
+		return fmt.Sprintf("placeholderAssignStmt(at=%s), %s, %s", locationString, left, right)
 	} else {
-		return fmt.Sprintf("placeholderAssignStmt()")
+		return fmt.Sprintf("placeholderAssignStmt(), %s, %s", left, right)
 	}
 }
 
 func visitGoStmt(node *ast.GoStmt, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("placeholderGoStmt(at=%s)", locationString)
+		return fmt.Sprintf("placeholderGoStmt(at=%s), %s", locationString, visitCallExpr(node.Call, fset, addLocs))
 	} else {
-		return fmt.Sprintf("placeholderGoStmt()")
+		return fmt.Sprintf("placeholderGoStmt(), %s", visitCallExpr(node.Call, fset, addLocs))
 	}
 }
 
 func visitDeferStmt(node *ast.DeferStmt, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("placeholderDeferStmt(at=%s)", locationString)
+		return fmt.Sprintf("placeholderDeferStmt(at=%s), %s", locationString, visitCallExpr(node.Call, fset, addLocs))
 	} else {
-		return fmt.Sprintf("placeholderDeferStmt()")
+		return fmt.Sprintf("placeholderDeferStmt(), %s", visitCallExpr(node.Call, fset, addLocs))
 	}
 }
 
 func visitReturnStmt(node *ast.ReturnStmt, fset *token.FileSet, addLocs bool) string {
+	result := visitExprList(node.Results, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("placeholderReturnStmt(at=%s)", locationString)
+		return fmt.Sprintf("placeholderReturnStmt(at=%s), %s", locationString, result)
 	} else {
-		return fmt.Sprintf("placeholderReturnStmt()")
+		return fmt.Sprintf("placeholderReturnStmt(), %s", result)
 	}
 }
 
@@ -270,11 +273,12 @@ func visitBranchStmt(node *ast.BranchStmt, fset *token.FileSet, addLocs bool) st
 }
 
 func visitBlockStmt(node *ast.BlockStmt, fset *token.FileSet, addLocs bool) string {
+	stmts := visitFunctionBody(node, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("placeholderBlockStmt(at=%s)", locationString)
+		return fmt.Sprintf("placeholderBlockStmt(at=%s), %s", locationString, stmts)
 	} else {
-		return fmt.Sprintf("placeholderBlockStmt()")
+		return fmt.Sprintf("placeholderBlockStmt(), %s", stmts)
 	}
 }
 
@@ -600,6 +604,14 @@ func visitChanType(node *ast.ChanType, fset *token.FileSet, addLocs bool) string
 	} else {
 		return fmt.Sprintf("placeholderChanType()")
 	}
+}
+
+func visitExprList(nodes []ast.Expr, fset *token.FileSet, addLocs bool) string {
+	var exprs []string
+	for i := 0; i < len(nodes); i++ {
+		exprs = append(exprs, visitExpr(&nodes[i], fset, addLocs))
+	}
+	return strings.Join(exprs, ",")
 }
 
 // end of exprs
