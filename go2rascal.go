@@ -177,18 +177,18 @@ func visitDeclStmt(node *ast.DeclStmt, fset *token.FileSet, addLocs bool) string
 func visitEmptyStmt(node *ast.EmptyStmt, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("EmptyStmt(at=%s)", locationString)
+		return fmt.Sprintf("emptyStmt(at=%s)", locationString)
 	} else {
-		return fmt.Sprintf("EmptyStmt()")
+		return fmt.Sprintf("emptyStmt()")
 	}
 }
 
 func visitLabeledStmt(node *ast.LabeledStmt, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("LabeledStmt(\"%s\", at=%s), %s", node.Label, locationString, visitStmt(&node.Stmt, fset, addLocs))
+		return fmt.Sprintf("labeledStmt(\"%s\", at=%s), %s", node.Label, locationString, visitStmt(&node.Stmt, fset, addLocs))
 	} else {
-		return fmt.Sprintf("LabeledStmt(\"%s\"), %s", node.Label, visitStmt(&node.Stmt, fset, addLocs))
+		return fmt.Sprintf("labeledStmt(\"%s\"), %s", node.Label, visitStmt(&node.Stmt, fset, addLocs))
 	}
 }
 
@@ -198,27 +198,27 @@ func visitExprStmt(node *ast.ExprStmt, fset *token.FileSet, addLocs bool) string
 	e := visitExpr(&node.X, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("ExprStmt(%s, at=%s) ", e, locationString)
+		return fmt.Sprintf("exprStmt(%s, at=%s) ", e, locationString)
 	} else {
-		return fmt.Sprintf("ExprStmt(%s) ", e)
+		return fmt.Sprintf("exprStmt(%s) ", e)
 	}
 }
 
 func visitSendStmt(node *ast.SendStmt, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("SendStmt(%s, %s, at=%s) ", visitExpr(&node.Chan, fset, addLocs), visitExpr(&node.Value, fset, addLocs), locationString)
+		return fmt.Sprintf("sendStmt(%s, %s, at=%s) ", visitExpr(&node.Chan, fset, addLocs), visitExpr(&node.Value, fset, addLocs), locationString)
 	} else {
-		return fmt.Sprintf("SendStmt(%s, %s)", visitExpr(&node.Chan, fset, addLocs), visitExpr(&node.Value, fset, addLocs))
+		return fmt.Sprintf("sendStmt(%s, %s)", visitExpr(&node.Chan, fset, addLocs), visitExpr(&node.Value, fset, addLocs))
 	}
 }
 
 func visitIncDecStmt(node *ast.IncDecStmt, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("IncDecStmt(\"%s\", %s, at=%s)", node.Tok, visitExpr(&node.X, fset, addLocs), locationString)
+		return fmt.Sprintf("incDecStmt(\"%s\", %s, at=%s)", node.Tok, visitExpr(&node.X, fset, addLocs), locationString)
 	} else {
-		return fmt.Sprintf("IncDecStmt(\"%s\", %s) ", node.Tok, visitExpr(&node.X, fset, addLocs))
+		return fmt.Sprintf("incDecStmt(\"%s\", %s) ", node.Tok, visitExpr(&node.X, fset, addLocs))
 	}
 }
 
@@ -227,27 +227,27 @@ func visitAssignStmt(node *ast.AssignStmt, fset *token.FileSet, addLocs bool) st
 	left := visitExprList(node.Rhs, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("AssignStmt( %s, %s, at=%s) ", left, right, locationString)
+		return fmt.Sprintf("assignStmt( %s, %s, at=%s) ", left, right, locationString)
 	} else {
-		return fmt.Sprintf("AssignStmt(%s, %s) ", left, right)
+		return fmt.Sprintf("assignStmt(%s, %s) ", left, right)
 	}
 }
 
 func visitGoStmt(node *ast.GoStmt, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("GoStmt(%s, at=%s) ", visitCallExpr(node.Call, fset, addLocs), locationString)
+		return fmt.Sprintf("goStmt(%s, at=%s) ", visitCallExpr(node.Call, fset, addLocs), locationString)
 	} else {
-		return fmt.Sprintf("GoStmt(%s) ", visitCallExpr(node.Call, fset, addLocs))
+		return fmt.Sprintf("goStmt(%s) ", visitCallExpr(node.Call, fset, addLocs))
 	}
 }
 
 func visitDeferStmt(node *ast.DeferStmt, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("DeferStmt(%s, at=%s) ", visitCallExpr(node.Call, fset, addLocs), locationString)
+		return fmt.Sprintf("deferStmt(%s, at=%s) ", visitCallExpr(node.Call, fset, addLocs), locationString)
 	} else {
-		return fmt.Sprintf("DeferStmt(%s) ", visitCallExpr(node.Call, fset, addLocs))
+		return fmt.Sprintf("deferStmt(%s) ", visitCallExpr(node.Call, fset, addLocs))
 	}
 }
 
@@ -255,18 +255,18 @@ func visitReturnStmt(node *ast.ReturnStmt, fset *token.FileSet, addLocs bool) st
 	result := visitExprList(node.Results, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("ReturnStmt(%s, at=%s) ", result, locationString)
+		return fmt.Sprintf("returnStmt(%s, at=%s) ", result, locationString)
 	} else {
-		return fmt.Sprintf("ReturnStmt(%s) ", result)
+		return fmt.Sprintf("returnStmt(%s) ", result)
 	}
 }
 
 func visitBranchStmt(node *ast.BranchStmt, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("BranchStmt(%s, %s, at=%s) ", node.Tok, node.Label, locationString)
+		return fmt.Sprintf("branchStmt(%s, %s, at=%s) ", node.Tok, node.Label, locationString)
 	} else {
-		return fmt.Sprintf("BranchStmt(%s, %s)", node.Tok, node.Label)
+		return fmt.Sprintf("branchStmt(%s, %s)", node.Tok, node.Label)
 	}
 }
 
@@ -274,9 +274,9 @@ func visitBlockStmt(node *ast.BlockStmt, fset *token.FileSet, addLocs bool) stri
 	stmts := visitFunctionBody(node, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("BlockStmt(%s, at=%s) ", stmts, locationString)
+		return fmt.Sprintf("blockStmt(%s, at=%s) ", stmts, locationString)
 	} else {
-		return fmt.Sprintf("BlockStmt(%s)", stmts)
+		return fmt.Sprintf("blockStmt(%s)", stmts)
 	}
 }
 
@@ -287,9 +287,9 @@ func visitIfStmt(node *ast.IfStmt, fset *token.FileSet, addLocs bool) string {
 	elseStmt := visitStmt(&node.Else, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("IfStmt(%s, %s, [%s], %s, at=%s) ", ifStmt, expr, block, elseStmt, locationString)
+		return fmt.Sprintf("ifStmt(%s, %s, [%s], %s, at=%s) ", ifStmt, expr, block, elseStmt, locationString)
 	} else {
-		return fmt.Sprintf("IfStmt(%s, %s, [%s], %s) ", ifStmt, expr, block, elseStmt)
+		return fmt.Sprintf("ifStmt(%s, %s, [%s], %s) ", ifStmt, expr, block, elseStmt)
 	}
 }
 
@@ -301,9 +301,9 @@ func visitCaseClause(node *ast.CaseClause, fset *token.FileSet, addLocs bool) st
 	exprs := visitExprList(node.List, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("CaseClause(%s, [%s], at=%s) ", stmts, exprs, locationString)
+		return fmt.Sprintf("caseClause([%s], [%s], at=%s) ", stmts, exprs, locationString)
 	} else {
-		return fmt.Sprintf("CaseClause(%s, [%s]) ", stmts, exprs)
+		return fmt.Sprintf("caseClause(%s, [%s]) ", stmts, exprs)
 	}
 }
 
@@ -313,9 +313,9 @@ func visitSwitchStmt(node *ast.SwitchStmt, fset *token.FileSet, addLocs bool) st
 	tag := visitExpr(&node.Tag, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("SwitchStmt(%s, %s, [%s], at=%s) ", init, tag, block, locationString)
+		return fmt.Sprintf("switchStmt(%s, %s, [%s], at=%s) ", init, tag, block, locationString)
 	} else {
-		return fmt.Sprintf("SwitchStmt(%s, %s, [%s]) ", init, tag, block)
+		return fmt.Sprintf("switchStmt(%s, %s, [%s]) ", init, tag, block)
 	}
 }
 
@@ -325,9 +325,9 @@ func visitTypeSwitchStmt(node *ast.TypeSwitchStmt, fset *token.FileSet, addLocs 
 	assign := visitStmt(&node.Assign, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("TypeSwitchStmt(%s, %s, [%s] at=%s) ", init, assign, block, locationString)
+		return fmt.Sprintf("typeSwitchStmt(%s, %s, [%s] at=%s) ", init, assign, block, locationString)
 	} else {
-		return fmt.Sprintf("TypeSwitchStmt(%s, %s, [%s])", init, assign, block)
+		return fmt.Sprintf("typeSwitchStmt(%s, %s, [%s])", init, assign, block)
 	}
 }
 
@@ -339,9 +339,9 @@ func visitCommClause(node *ast.CommClause, fset *token.FileSet, addLocs bool) st
 	}
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("CommClause(%s, [%s], at=%s)", comm, stmts, locationString)
+		return fmt.Sprintf("commClause(%s, [%s], at=%s)", comm, stmts, locationString)
 	} else {
-		return fmt.Sprintf("CommClause(%s, [%s])", comm, stmts)
+		return fmt.Sprintf("commClause(%s, [%s])", comm, stmts)
 	}
 }
 
@@ -349,9 +349,9 @@ func visitSelectStmt(node *ast.SelectStmt, fset *token.FileSet, addLocs bool) st
 	block := visitBlockStmt(node.Body, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("SelectStmt([%s], at=%s) ", block, locationString)
+		return fmt.Sprintf("selectStmt([%s], at=%s) ", block, locationString)
 	} else {
-		return fmt.Sprintf("SelectStmt([%s]) ", block)
+		return fmt.Sprintf("selectStmt([%s]) ", block)
 	}
 }
 
@@ -362,9 +362,9 @@ func visitForStmt(node *ast.ForStmt, fset *token.FileSet, addLocs bool) string {
 	cond := visitExpr(&node.Cond, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("ForStmt(%s, %s, %s, [%s], at=%s)", init, cond, post, block, locationString)
+		return fmt.Sprintf("forStmt(%s, %s, %s, [%s], at=%s)", init, cond, post, block, locationString)
 	} else {
-		return fmt.Sprintf("ForStmt(%s, %s, %s, [%s])", init, cond, post, block)
+		return fmt.Sprintf("forStmt(%s, %s, %s, [%s])", init, cond, post, block)
 	}
 }
 
@@ -375,9 +375,9 @@ func visitRangeStmt(node *ast.RangeStmt, fset *token.FileSet, addLocs bool) stri
 	block := visitBlockStmt(node.Body, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("RangeStmt(%s, %s, %s, [%s], at=%s)", key, value, x, block, locationString)
+		return fmt.Sprintf("rangeStmt(%s, %s, %s, [%s], at=%s)", key, value, x, block, locationString)
 	} else {
-		return fmt.Sprintf("RangeStmt(%s, %s, %s, [%s])", key, value, x, block)
+		return fmt.Sprintf("rangeStmt(%s, %s, %s, [%s])", key, value, x, block)
 	}
 }
 
@@ -460,36 +460,36 @@ func visitIdent(node *ast.Ident, fset *token.FileSet, addLocs bool) string {
 	name := node.Name
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("Ident(%s, at=%s)", name, locationString)
+		return fmt.Sprintf("ident(%s, at=%s)", name, locationString)
 	} else {
-		return fmt.Sprintf("Ident(%s)", name)
+		return fmt.Sprintf("ident(%s)", name)
 	}
 }
 func visitEllipsis(node *ast.Ellipsis, fset *token.FileSet, addLocs bool) string {
 	elt := visitExpr(&node.Elt, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("Ellipsis(%s, at=%s)", elt, locationString)
+		return fmt.Sprintf("ellipsis(%s, at=%s)", elt, locationString)
 	} else {
-		return fmt.Sprintf("Ellipsis(%s)", elt)
+		return fmt.Sprintf("ellipsis(%s)", elt)
 	}
 }
 func visitBasicLit(node *ast.BasicLit, fset *token.FileSet, addLocs bool) string {
 	value := node.Value
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("BasicLit(%s, at=%s)", value, locationString)
+		return fmt.Sprintf("basicLit(%s, at=%s)", value, locationString)
 	} else {
-		return fmt.Sprintf("BasicLit(%s)", value)
+		return fmt.Sprintf("basicLit(%s)", value)
 	}
 }
 func visitFuncLit(node *ast.FuncLit, fset *token.FileSet, addLocs bool) string {
 	body := visitBlockStmt(node.Body, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("FuncLit(%s, at=%s)", body, locationString)
+		return fmt.Sprintf("funcLit([%s], at=%s)", body, locationString)
 	} else {
-		return fmt.Sprintf("FuncLit(%s)", body)
+		return fmt.Sprintf("funcLit(%s)", body)
 	}
 }
 func visitCompositeLit(node *ast.CompositeLit, fset *token.FileSet, addLocs bool) string {
@@ -497,27 +497,27 @@ func visitCompositeLit(node *ast.CompositeLit, fset *token.FileSet, addLocs bool
 	elts := visitExprList(node.Elts, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("CompositeLit(%s, [%s], at=%s)", types, elts, locationString)
+		return fmt.Sprintf("compositeLit(%s, [%s], at=%s)", types, elts, locationString)
 	} else {
-		return fmt.Sprintf("CompositeLit(%s, [%s])", types, elts)
+		return fmt.Sprintf("compositeLit(%s, [%s])", types, elts)
 	}
 }
 func visitParenExpr(node *ast.ParenExpr, fset *token.FileSet, addLocs bool) string {
 	x := visitExpr(&node.X, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("ParenExpr(%s, at=%s)", x, locationString)
+		return fmt.Sprintf("parenExpr(%s, at=%s)", x, locationString)
 	} else {
-		return fmt.Sprintf("ParenExpr(%s)", x)
+		return fmt.Sprintf("parenExpr(%s)", x)
 	}
 }
 func visitSelectorExpr(node *ast.SelectorExpr, fset *token.FileSet, addLocs bool) string {
 	x := visitExpr(&node.X, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("SelectorExpr(%s, at=%s)", x, locationString)
+		return fmt.Sprintf("selectorExpr(%s, at=%s)", x, locationString)
 	} else {
-		return fmt.Sprintf("SelectorExpr(%s)", x)
+		return fmt.Sprintf("selectorExpr(%s)", x)
 	}
 }
 func visitIndexExpr(node *ast.IndexExpr, fset *token.FileSet, addLocs bool) string {
@@ -525,9 +525,9 @@ func visitIndexExpr(node *ast.IndexExpr, fset *token.FileSet, addLocs bool) stri
 	index := visitExpr(&node.Index, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("IndexExpr(%s, %s, at=%s)", x, index, locationString)
+		return fmt.Sprintf("indexExpr(%s, %s, at=%s)", x, index, locationString)
 	} else {
-		return fmt.Sprintf("IndexExpr(%s, %s)", x, index)
+		return fmt.Sprintf("indexExpr(%s, %s)", x, index)
 	}
 }
 func visitIndexListExpr(node *ast.IndexListExpr, fset *token.FileSet, addLocs bool) string {
@@ -535,9 +535,9 @@ func visitIndexListExpr(node *ast.IndexListExpr, fset *token.FileSet, addLocs bo
 	indices := visitExprList(node.Indices, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("placeholderIndexListExpr(%s, [%s], at=%s)", x, indices, locationString)
+		return fmt.Sprintf("indexListExpr(%s, [%s], at=%s)", x, indices, locationString)
 	} else {
-		return fmt.Sprintf("placeholderIndexListExpr(%s, [%s])", x, indices)
+		return fmt.Sprintf("indexListExpr(%s, [%s])", x, indices)
 	}
 }
 func visitSliceExpr(node *ast.SliceExpr, fset *token.FileSet, addLocs bool) string {
@@ -547,9 +547,9 @@ func visitSliceExpr(node *ast.SliceExpr, fset *token.FileSet, addLocs bool) stri
 	max := visitExpr(&node.Max, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("SliceExpr(%s, %s, %s, %s, at=%s)", x, low, high, max, locationString)
+		return fmt.Sprintf("sliceExpr(%s, %s, %s, %s, at=%s)", x, low, high, max, locationString)
 	} else {
-		return fmt.Sprintf("SliceExpr(%s, %s, %s, %s)", x, low, high, max)
+		return fmt.Sprintf("sliceExpr(%s, %s, %s, %s)", x, low, high, max)
 	}
 }
 func visitTypeAssertExpr(node *ast.TypeAssertExpr, fset *token.FileSet, addLocs bool) string {
@@ -557,9 +557,9 @@ func visitTypeAssertExpr(node *ast.TypeAssertExpr, fset *token.FileSet, addLocs 
 	types := visitExpr(&node.Type, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("TypeAssertExpr(%s, %s, at=%s)", x, types, locationString)
+		return fmt.Sprintf("typeAssertExpr(%s, %s, at=%s)", x, types, locationString)
 	} else {
-		return fmt.Sprintf("TypeAssertExpr(%s, %s)", x, types)
+		return fmt.Sprintf("typeAssertExpr(%s, %s)", x, types)
 	}
 }
 func visitCallExpr(node *ast.CallExpr, fset *token.FileSet, addLocs bool) string {
@@ -567,18 +567,18 @@ func visitCallExpr(node *ast.CallExpr, fset *token.FileSet, addLocs bool) string
 	args := visitExprList(node.Args, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("CallExpr(%s, [%s], at=%s)", fun, args, locationString)
+		return fmt.Sprintf("callExpr(%s, [%s], at=%s)", fun, args, locationString)
 	} else {
-		return fmt.Sprintf("CallExpr(%s, [%s])", fun, args)
+		return fmt.Sprintf("callExpr(%s, [%s])", fun, args)
 	}
 }
 func visitStarExpr(node *ast.StarExpr, fset *token.FileSet, addLocs bool) string {
 	x := visitExpr(&node.X, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("StarExpr(%s, at=%s)", x, locationString)
+		return fmt.Sprintf("starExpr(%s, at=%s)", x, locationString)
 	} else {
-		return fmt.Sprintf("StarExpr(%s)", x)
+		return fmt.Sprintf("starExpr(%s)", x)
 	}
 }
 func visitUnaryExpr(node *ast.UnaryExpr, fset *token.FileSet, addLocs bool) string {
@@ -586,9 +586,9 @@ func visitUnaryExpr(node *ast.UnaryExpr, fset *token.FileSet, addLocs bool) stri
 	tok := node.Op.String()
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("UnaryExpr(%s, %s, at=%s)", x, tok, locationString)
+		return fmt.Sprintf("unaryExpr(%s, %s, at=%s)", x, tok, locationString)
 	} else {
-		return fmt.Sprintf("UnaryExpr(%s, %s)", x, tok)
+		return fmt.Sprintf("unaryExpr(%s, %s)", x, tok)
 	}
 }
 func visitBinaryExpr(node *ast.BinaryExpr, fset *token.FileSet, addLocs bool) string {
@@ -597,9 +597,9 @@ func visitBinaryExpr(node *ast.BinaryExpr, fset *token.FileSet, addLocs bool) st
 	y := visitExpr(&node.Y, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("BinaryExpr(%s, %s, %s, at=%s)", x, tok, y, locationString)
+		return fmt.Sprintf("binaryExpr(%s, %s, %s, at=%s)", x, tok, y, locationString)
 	} else {
-		return fmt.Sprintf("BinaryExpr(%s, %s, %s)", x, tok, y)
+		return fmt.Sprintf("binaryExpr(%s, %s, %s)", x, tok, y)
 	}
 }
 func visitKeyValueExpr(node *ast.KeyValueExpr, fset *token.FileSet, addLocs bool) string {
@@ -607,9 +607,9 @@ func visitKeyValueExpr(node *ast.KeyValueExpr, fset *token.FileSet, addLocs bool
 	value := visitExpr(&node.Value, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("KeyValueExpr(%s, %s, at=%s)", key, value, locationString)
+		return fmt.Sprintf("keyValueExpr(%s, %s, at=%s)", key, value, locationString)
 	} else {
-		return fmt.Sprintf("KeyValueExpr(%s, %s)", key, value)
+		return fmt.Sprintf("keyValueExpr(%s, %s)", key, value)
 	}
 }
 func visitArrayType(node *ast.ArrayType, fset *token.FileSet, addLocs bool) string {
@@ -617,33 +617,33 @@ func visitArrayType(node *ast.ArrayType, fset *token.FileSet, addLocs bool) stri
 	elt := visitExpr(&node.Elt, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("ArrayType(%s, %s, at=%s)", lens, elt, locationString)
+		return fmt.Sprintf("arrayType(%s, %s, at=%s)", lens, elt, locationString)
 	} else {
-		return fmt.Sprintf("ArrayType(%s, %s)", lens, elt)
+		return fmt.Sprintf("arrayType(%s, %s)", lens, elt)
 	}
 }
 func visitStructType(node *ast.StructType, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("StructType(at=%s)", locationString)
+		return fmt.Sprintf("structType(at=%s)", locationString)
 	} else {
-		return fmt.Sprintf("StructType()")
+		return fmt.Sprintf("structType()")
 	}
 }
 func visitFuncType(node *ast.FuncType, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("FuncType(at=%s)", locationString)
+		return fmt.Sprintf("funcType(at=%s)", locationString)
 	} else {
-		return fmt.Sprintf("FuncType()")
+		return fmt.Sprintf("funcType()")
 	}
 }
 func visitInterfaceType(node *ast.InterfaceType, fset *token.FileSet, addLocs bool) string {
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("InterfaceType(at=%s)", locationString)
+		return fmt.Sprintf("interfaceType(at=%s)", locationString)
 	} else {
-		return fmt.Sprintf("InterfaceType()")
+		return fmt.Sprintf("interfaceType()")
 	}
 }
 func visitMapType(node *ast.MapType, fset *token.FileSet, addLocs bool) string {
@@ -651,18 +651,18 @@ func visitMapType(node *ast.MapType, fset *token.FileSet, addLocs bool) string {
 	value := visitExpr(&node.Value, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("MapType(%s, %s, at=%s)", key, value, locationString)
+		return fmt.Sprintf("mapType(%s, %s, at=%s)", key, value, locationString)
 	} else {
-		return fmt.Sprintf("MapType(%s, %s)", key, value)
+		return fmt.Sprintf("mapType(%s, %s)", key, value)
 	}
 }
 func visitChanType(node *ast.ChanType, fset *token.FileSet, addLocs bool) string {
 	value := visitExpr(&node.Value, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("ChanType(%s, at=%s)", value, locationString)
+		return fmt.Sprintf("chanType(%s, at=%s)", value, locationString)
 	} else {
-		return fmt.Sprintf("ChanType()")
+		return fmt.Sprintf("chanType()")
 	}
 }
 
