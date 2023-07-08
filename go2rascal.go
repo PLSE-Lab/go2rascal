@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+var rascalizer *strings.Replacer = strings.NewReplacer("<", "\\<", ">", "\\>", "\n", "\\n", "\t", "\\t", "\r", "\\r", "\\", "\\\\", "\"", "\\\"", "'", "\\'")
+
 // parses file and makes sure there is no error in file input.
 func processFile(filePath string, addLocs bool) string {
 	fset := token.NewFileSet()
@@ -81,7 +83,7 @@ func visitSpec(node *ast.Spec, fset *token.FileSet, addLocs bool) string {
 
 func visitImportSpec(node *ast.ImportSpec, fset *token.FileSet, addLocs bool) string {
 	specName := optionalNameToRascal(node.Name)
-	specPath := literalToRascal(node.Path)
+	specPath := literalToRascal(node.Path, fset, addLocs)
 
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
@@ -142,7 +144,7 @@ func visitGeneralDeclaration(node *ast.GenDecl, fset *token.FileSet, addLocs boo
 func visitFunctionDeclaration(node *ast.FuncDecl, fset *token.FileSet, addLocs bool) string {
 	receivers := visitFieldList(node.Recv, fset, addLocs)
 	signature := visitFuncType(node.Type, fset, addLocs)
-	body := visitBlockStmt(node.Body, fset, addLocs)
+	body := visitOptionalBlockStmt(node.Body, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
 		return fmt.Sprintf("funDecl(\"%s\",%s,%s,%s,at=%s)", node.Name, receivers, signature, body, locationString)
@@ -326,6 +328,14 @@ func visitBranchStmt(node *ast.BranchStmt, fset *token.FileSet, addLocs bool) st
 		return fmt.Sprintf("branchStmt(%s,%s,at=%s)", typeStr, labelStr, locationString)
 	} else {
 		return fmt.Sprintf("branchStmt(%s,%s)", typeStr, labelStr)
+	}
+}
+
+func visitOptionalBlockStmt(node *ast.BlockStmt, fset *token.FileSet, addLocs bool) string {
+	if node == nil {
+		return "noStmt()"
+	} else {
+		return fmt.Sprintf("someStmt(%s)", visitBlockStmt(node, fset, addLocs))
 	}
 }
 
@@ -572,30 +582,81 @@ func visitEllipsis(node *ast.Ellipsis, fset *token.FileSet, addLocs bool) string
 	}
 }
 
-func literalToRascal(node *ast.BasicLit) string {
+func literalToRascal(node *ast.BasicLit, fset *token.FileSet, addLocs bool) string {
+	locationString := computeLocation(fset, node.Pos(), node.End())
+
 	switch node.Kind {
 	case token.INT:
-		return fmt.Sprintf("literalInt(%s)", node.Value)
-	case token.FLOAT:
-		return fmt.Sprintf("literalFloat(%s)", node.Value)
-	case token.CHAR:
-		return fmt.Sprintf("literalChar(\"%s\")", node.Value)
-	case token.STRING:
-		return fmt.Sprintf("literalString(%s)", rascalizeString(node.Value))
-	case token.IMAG:
-		ic, err := strconv.ParseComplex(node.Value, 128)
-		if err != nil {
-			return fmt.Sprintf("unknownLiteral(\"%s\")", node.Value)
+		if parsed, err := strconv.ParseInt(node.Value, 0, 0); err == nil {
+			if addLocs {
+				return fmt.Sprintf("literalInt(%d,at=%s)", parsed, locationString)
+			} else {
+				return fmt.Sprintf("literalInt(%d)", parsed)
+			}
+		} else if parsed, err := strconv.ParseUint(node.Value, 0, 0); err == nil {
+			if addLocs {
+				return fmt.Sprintf("literalInt(%d,at=%s)", parsed, locationString)
+			} else {
+				return fmt.Sprintf("literalInt(%d)", parsed)
+			}
 		} else {
-			return fmt.Sprintf("literalImaginary(%g,%g)", real(ic), imag(ic))
+			if addLocs {
+				return fmt.Sprintf("unknownLiteral(\"%s\",at=%s)", node.Value, locationString)
+			} else {
+				return fmt.Sprintf("unknownLiteral(\"%s\")", node.Value)
+			}
+		}
+	case token.FLOAT:
+		if parsed, err := strconv.ParseFloat(node.Value, 64); err == nil {
+			if addLocs {
+				return fmt.Sprintf("literalFloat(%f,at=%s)", parsed, locationString)
+			} else {
+				return fmt.Sprintf("literalFloat(%f)", parsed)
+			}
+		} else {
+			if addLocs {
+				return fmt.Sprintf("unknownLiteral(\"%s\",at=%s)", node.Value, locationString)
+			} else {
+				return fmt.Sprintf("unknownLiteral(\"%s\")", node.Value)
+			}
+		}
+	case token.CHAR:
+		if addLocs {
+			return fmt.Sprintf("literalChar(%s,at=%s)", rascalizeChar(node.Value), locationString)
+		} else {
+			return fmt.Sprintf("literalChar(%s)", rascalizeChar(node.Value))
+		}
+	case token.STRING:
+		if addLocs {
+			return fmt.Sprintf("literalString(%s,at=%s)", rascalizeString(node.Value), locationString)
+		} else {
+			return fmt.Sprintf("literalString(%s)", rascalizeString(node.Value))
+		}
+	case token.IMAG:
+		if ic, err := strconv.ParseComplex(node.Value, 128); err == nil {
+			if addLocs {
+				return fmt.Sprintf("literalImaginary(%f,%f,at=%s)", real(ic), imag(ic), locationString)
+			} else {
+				return fmt.Sprintf("literalImaginary(%f,%f)", real(ic), imag(ic))
+			}
+		} else {
+			if addLocs {
+				return fmt.Sprintf("unknownLiteral(\"%s\",at=%s)", node.Value, locationString)
+			} else {
+				return fmt.Sprintf("unknownLiteral(\"%s\")", node.Value)
+			}
 		}
 	default:
-		return fmt.Sprintf("unknownLiteral(\"%s\")", node.Value)
+		if addLocs {
+			return fmt.Sprintf("unknownLiteral(\"%s\",at=%s)", node.Value, locationString)
+		} else {
+			return fmt.Sprintf("unknownLiteral(\"%s\")", node.Value)
+		}
 	}
 }
 
 func visitBasicLit(node *ast.BasicLit, fset *token.FileSet, addLocs bool) string {
-	value := literalToRascal(node)
+	value := literalToRascal(node, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
 		return fmt.Sprintf("basicLit(%s,at=%s)", value, locationString)
@@ -755,7 +816,7 @@ func visitOptionBasicLiteral(literal *ast.BasicLit, fset *token.FileSet, addLocs
 	if literal == nil {
 		return "noLiteral()"
 	} else {
-		return fmt.Sprintf("someLiteral(%s)", visitBasicLit(literal, fset, addLocs))
+		return fmt.Sprintf("someLiteral(%s)", literalToRascal(literal, fset, addLocs))
 	}
 }
 
@@ -947,7 +1008,7 @@ func assignmentOpToRascal(node token.Token) string {
 	case token.ASSIGN:
 		return "assign()"
 	default:
-		return fmt.Sprintf("unknownAssign(%s)", node.String())
+		return fmt.Sprintf("unknownAssign(\"%s\")", node.String())
 	}
 }
 
@@ -990,10 +1051,17 @@ func labelToRascal(node *ast.Ident) string {
 }
 
 func rascalizeString(input string) string {
-	r := strings.NewReplacer("<", "\\<", ">", "\\>", "\n", "\\n", "\t", "\\t", "\r", "\\r", "\\", "\\\\", "\"", "\\\"")
+	//r := strings.NewReplacer("<", "\\<", ">", "\\>", "\n", "\\n", "\t", "\\t", "\r", "\\r", "\\", "\\\\", "\"", "\\\"", "'", "\\'")
 	s1, _ := strings.CutPrefix(input, "\"")
 	s2, _ := strings.CutSuffix(s1, "\"")
-	return fmt.Sprintf("\"%s\"", r.Replace(s2))
+	return fmt.Sprintf("\"%s\"", rascalizer.Replace(s2))
+}
+
+func rascalizeChar(input string) string {
+	//r := strings.NewReplacer("<", "\\<", ">", "\\>", "\n", "\\n", "\t", "\\t", "\r", "\\r", "\\", "\\\\", "\"", "\\\"", "'", "\\'")
+	s1, _ := strings.CutPrefix(input, "'")
+	s2, _ := strings.CutSuffix(s1, "'")
+	return fmt.Sprintf("\"%s\"", rascalizer.Replace(s2))
 }
 
 func main() {
