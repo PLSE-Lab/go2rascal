@@ -16,8 +16,7 @@ var rascalizer *strings.Replacer = strings.NewReplacer("<", "\\<", ">", "\\>", "
 // parses file and makes sure there is no error in file input.
 func processFile(filePath string, addLocs bool) string {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, filePath, nil, 0)
-	if err != nil {
+	if file, err := parser.ParseFile(fset, filePath, nil, 0); err != nil {
 		return fmt.Sprintf("errorFile(Could not process file %s, %s)", filePath, err.Error())
 	} else {
 		return visitFile(file, fset, addLocs)
@@ -420,7 +419,7 @@ func visitTypeSwitchStmt(node *ast.TypeSwitchStmt, fset *token.FileSet, addLocs 
 }
 
 func clauseToRascal(node *ast.Stmt, fset *token.FileSet, addLocs bool) string {
-	if node == nil {
+	if *node == nil {
 		return "defaultComm()"
 	} else {
 		return fmt.Sprintf("regularComm(%s)", visitStmt(node, fset, addLocs))
@@ -742,7 +741,7 @@ func visitSliceExpr(node *ast.SliceExpr, fset *token.FileSet, addLocs bool) stri
 }
 func visitTypeAssertExpr(node *ast.TypeAssertExpr, fset *token.FileSet, addLocs bool) string {
 	x := visitExpr(&node.X, fset, addLocs)
-	types := visitExpr(&node.Type, fset, addLocs)
+	types := visitOptionExpr(&node.Type, fset, addLocs)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
 		return fmt.Sprintf("typeAssertExpr(%s,%s,at=%s)", x, types, locationString)
@@ -1007,6 +1006,8 @@ func assignmentOpToRascal(node token.Token) string {
 		return "defineAssign()"
 	case token.ASSIGN:
 		return "assign()"
+	case token.ILLEGAL:
+		return "noKey()"
 	default:
 		return fmt.Sprintf("unknownAssign(\"%s\")", node.String())
 	}
