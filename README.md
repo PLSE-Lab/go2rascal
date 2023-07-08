@@ -34,4 +34,10 @@ binary using the command `go build go2rascal.go`. This will create an
 executable named `go2rascal` in the current directory. If the `runConverterBinary`
 flag in the Go AiR configuration is set to `true`, this binary will
 be used instead of running `go2rascal.go` using `go run`, which compiles
-the file each time.
+the file each time. Running the file from the binary uses the same arguments
+as running it using `go run`, for instance:
+
+```
+./go2rascal --filePath /tmp/input.go --addLocs=False
+```
+
