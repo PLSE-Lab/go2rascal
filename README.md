@@ -1,5 +1,3 @@
-Note that this is still under development. Feel free to check back soon!
-
 # Introduction
 
 `go2rascal` is a converter from Go ASTs to a Rascal-compatible AST format. 
@@ -22,7 +20,18 @@ standard Go libraries, and will then emit a textual version
 of an AST for the file. This AST is in Rascal format, so it can be
 pasted into a Rascal terminal that has already loaded the AST definition.
 
-# Updates are Coming Soon!
+You can enable and disable the addition of source locations on the generated
+ASTs using the `--addLocs` flag. By default, locations are added, which is
+equivalent to `--addLocs=True`. Passing the flag `-addLocs=False` will disable
+the addition of source locations. An example of this would be:
 
-We are at the very beginning of developing this, so it doesn't do much yet,
-but please watch the repo and check back soon!
+```
+go run go2rascal.go --filePath /tmp/input.go --addLocs=False
+```
+
+Finally, to speed up the AST generation process, you can build the `go2rascal`
+binary using the command `go build go2rascal.go`. This will create an
+executable named `go2rascal` in the current directory. If the `runConverterBinary`
+flag in the Go AiR configuration is set to `true`, this binary will
+be used instead of running `go2rascal.go` using `go run`, which compiles
+the file each time.
