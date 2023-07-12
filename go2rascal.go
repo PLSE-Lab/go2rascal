@@ -12,9 +12,10 @@ import (
 )
 
 var rascalizer *strings.Replacer = strings.NewReplacer("<", "\\<", ">", "\\>", "\n", "\\n", "\t", "\\t", "\r", "\\r", "\\", "\\\\", "\"", "\\\"", "'", "\\'")
+var filePath string = ""
 
 // parses file and makes sure there is no error in file input.
-func processFile(filePath string, addLocs bool) string {
+func processFile(addLocs bool) string {
 	fset := token.NewFileSet()
 	if file, err := parser.ParseFile(fset, filePath, nil, 0); err != nil {
 		return fmt.Sprintf("errorFile(Could not process file %s, %s)", filePath, err.Error())
@@ -916,10 +917,10 @@ func visitStmtList(nodes []ast.Stmt, fset *token.FileSet, addLocs bool) string {
 func computeLocation(fset *token.FileSet, start token.Pos, end token.Pos) string {
 	if start.IsValid() && end.IsValid() {
 		startPos := fset.Position(start)
-		endPos := fset.Position(end)
-		return fmt.Sprintf("|file://%s|(%d,%d,<%d,%d>,<%d,%d>)",
-			startPos.Filename, startPos.Offset, end-start,
-			startPos.Line, startPos.Column-1, endPos.Line, endPos.Column-1)
+		//endPos := fset.Position(end)
+		return fmt.Sprintf("|file://%s|(%d,%d)",
+			filePath, startPos.Offset, end-start)
+		//startPos.Line, startPos.Column-1, endPos.Line, endPos.Column-1)
 	} else {
 		return fmt.Sprintf("|file://%s|", fset.Position(start).Filename)
 	}
@@ -973,8 +974,10 @@ func opToRascal(node token.Token) string {
 		return "lessThanEq()"
 	case token.GEQ:
 		return "greaterThanEq()"
+	case token.TILDE:
+		return "tilde()"
 	default:
-		return fmt.Sprintf("unknownOp(%s)", node.String())
+		return fmt.Sprintf("unknownOp(\"%s\")", node.String())
 	}
 }
 
@@ -1066,7 +1069,6 @@ func rascalizeChar(input string) string {
 }
 
 func main() {
-	var filePath string
 	flag.StringVar(&filePath, "filePath", "", "The file to be processed")
 
 	var addLocations bool
@@ -1076,7 +1078,7 @@ func main() {
 
 	if filePath != "" {
 		//fmt.Printf("Processing file %s\n", filePath)
-		fmt.Println(processFile(filePath, addLocations))
+		fmt.Println(processFile(addLocations))
 	} else {
 		fmt.Println("No file given")
 	}
