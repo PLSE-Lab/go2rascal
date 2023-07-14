@@ -885,9 +885,22 @@ func visitMapType(node *ast.MapType, fset *token.FileSet, addLocs bool) string {
 		return fmt.Sprintf("mapType(%s,%s)", key, value)
 	}
 }
+
+func channelDirToRascal(dir ast.ChanDir) string {
+	if (dir&ast.SEND == ast.SEND) && (dir&ast.RECV == ast.RECV) {
+		return "bidirectional()"
+	} else if dir&ast.SEND == ast.SEND {
+		return "send()"
+	} else if dir&ast.RECV == ast.RECV {
+		return "receive()"
+	} else {
+		return "unknown()"
+	}
+}
+
 func visitChanType(node *ast.ChanType, fset *token.FileSet, addLocs bool) string {
 	value := visitExpr(&node.Value, fset, addLocs)
-	chanSend := boolToRascal(node.Dir == ast.SEND)
+	chanSend := channelDirToRascal(node.Dir)
 	if addLocs {
 		locationString := computeLocation(fset, node.Pos(), node.End())
 		return fmt.Sprintf("chanType(%s,%s,at=%s)", value, chanSend, locationString)
