@@ -1,1 +1,4 @@
 .idea
+
+# Don't include the binary itself
+go2rascal
