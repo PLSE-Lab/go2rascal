@@ -587,17 +587,28 @@ func literalToRascal(node *ast.BasicLit, fset *token.FileSet, addLocs bool) stri
 
 	switch node.Kind {
 	case token.INT:
-		if parsed, err := strconv.ParseInt(node.Value, 0, 0); err == nil {
+		if parsed, err := strconv.ParseInt(node.Value, 0, 64); err == nil {
 			if addLocs {
 				return fmt.Sprintf("literalInt(%d,at=%s)", parsed, locationString)
 			} else {
 				return fmt.Sprintf("literalInt(%d)", parsed)
 			}
-		} else if parsed, err := strconv.ParseUint(node.Value, 0, 0); err == nil {
+		} else if parsed, err := strconv.ParseUint(node.Value, 0, 64); err == nil {
 			if addLocs {
 				return fmt.Sprintf("literalInt(%d,at=%s)", parsed, locationString)
 			} else {
 				return fmt.Sprintf("literalInt(%d)", parsed)
+			}
+		} else if parsed, err := strconv.ParseFloat(node.Value, 64); err == nil {
+			// NOTE: This is here because we can include an INT literal as an argument
+			// when setting up a floating-point number that is outside the possible
+			// bounds of an int64, e.g.,340282346638528860000000000000000000000. This
+			// is coerced into a float in that case, but cannot be represented as either
+			// an int32 or an int64.
+			if addLocs {
+				return fmt.Sprintf("literalFloat(%f,at=%s)", parsed, locationString)
+			} else {
+				return fmt.Sprintf("literalFloat(%f)", parsed)
 			}
 		} else {
 			if addLocs {
