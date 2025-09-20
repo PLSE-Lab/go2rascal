@@ -24,6 +24,15 @@ func processFile(addLocs bool) string {
 	}
 }
 
+func processExpr(exprText string) string {
+	fset := token.NewFileSet()
+	if expr, err := parser.ParseExpr(exprText); err != nil {
+		return fmt.Sprintf("unknownExpr(%s)", err.Error())
+	} else {
+		return visitExpr(&expr, fset, false)
+	}
+}
+
 func visitFile(node *ast.File, fset *token.FileSet, addLocs bool) string {
 	var decls []string
 	for i := 0; i < len(node.Decls); i++ {
@@ -1098,12 +1107,17 @@ func main() {
 	var addLocations bool
 	flag.BoolVar(&addLocations, "addLocs", true, "Include location annotations")
 
+	var exprText string
+	flag.StringVar(&exprText, "expr", "", "The expression to parse")
+
 	flag.Parse()
 
 	if filePath != "" {
 		//fmt.Printf("Processing file %s\n", filePath)
 		fmt.Println(processFile(addLocations))
+	} else if exprText != "" {
+		fmt.Println(processExpr(exprText))
 	} else {
-		fmt.Println("No file given")
+		fmt.Println("No file or expression given")
 	}
 }
