@@ -51,11 +51,12 @@ func addKeywordParameters(node ast.Node, fset *token.FileSet, config *Config) st
 }
 
 // parses and type checks an entire project, returning a map of type-annotated AST nodes
-func processProject(addLocs bool, addTypes bool) string {
+func processProject(addLocs bool, addTypes bool, includeTests bool) string {
 	// We want type-annotated syntax for the files in the current project
 	cfg := &packages.Config{
-		Mode: packages.LoadSyntax,
-		Dir:  projectPath,
+		Mode:  packages.LoadSyntax,
+		Dir:   projectPath,
+		Tests: includeTests,
 	}
 
 	// Load the project, computing types and resolving dependencies
@@ -940,6 +941,9 @@ func main() {
 	var addTypes bool
 	flag.BoolVar(&addTypes, "addTypes", true, "Include type information")
 
+	var includeTests bool
+	flag.BoolVar(&includeTests, "includeTests", false, "Include test files")
+
 	var exprText string
 	flag.StringVar(&exprText, "expr", "", "The expression to parse")
 
@@ -947,7 +951,7 @@ func main() {
 
 	if projectPath != "" {
 		if scratchDir != "" {
-			fmt.Println(processProject(addLocations, addTypes))
+			fmt.Println(processProject(addLocations, addTypes, includeTests))
 		} else {
 			fmt.Println("No scratch directory given for generated ASTs")
 		}
