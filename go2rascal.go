@@ -4,23 +4,132 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
-var rascalizer *strings.Replacer = strings.NewReplacer("<", "\\<", ">", "\\>", "\n", "\\n", "\t", "\\t", "\r", "\\r", "\\", "\\\\", "\"", "\\\"", "'", "\\'")
-var filePath string = ""
+var rascalizer = strings.NewReplacer("<", "\\<", ">", "\\>", "\n", "\\n", "\t", "\\t", "\r", "\\r", "\\", "\\\\", "\"", "\\\"", "'", "\\'")
+var filePath = ""
+var projectPath = ""
+var scratchDir = ""
+
+type Config struct {
+	addLocs  bool
+	addTypes bool
+	info     *types.Info
+}
+
+func addKeywordParameters(node ast.Node, fset *token.FileSet, config *Config) string {
+	res := ""
+	params := make(map[string]string)
+
+	if config.addLocs {
+		params["at"] = computeLocation(fset, node.Pos(), node.End())
+	}
+
+	if config.addTypes {
+		if expr, ok := node.(ast.Expr); ok {
+			if t, ok := config.info.Types[expr]; ok {
+				params["exprType"] = rascalizeString(t.Type.String())
+			}
+		}
+	}
+
+	for key, value := range params {
+		res = res + fmt.Sprintf(", %s=%s", key, value)
+	}
+	return res
+}
+
+// parses and type checks an entire project, returning a map of type-annotated AST nodes
+func processProject(addLocs bool, addTypes bool) string {
+	// We want type-annotated syntax for the files in the current project
+	cfg := &packages.Config{
+		Mode: packages.LoadSyntax,
+		Dir:  projectPath,
+	}
+
+	// Load the project, computing types and resolving dependencies
+	pkgs, err := packages.Load(cfg, projectPath)
+	if err != nil {
+		return fmt.Sprintf("errorSystem(\"Could not load project at path %s, errors: %s\")", projectPath, err.Error())
+	}
+
+	// Delete and recreate the scratch directory to make sure it's empty
+	if err := os.RemoveAll(scratchDir); err != nil {
+		panic(err)
+	}
+	if err := os.MkdirAll(scratchDir, 0700); err != nil {
+		panic(err)
+	}
+
+	// Generate Rascal terms for the files in the project package, saving
+	// them each into a separate file in the scratch directory
+	var files = make(map[string]string)
+	counter := 0
+	for _, pkg := range pkgs {
+		config := &Config{
+			addLocs:  addLocs,
+			addTypes: addTypes,
+			info:     pkg.TypesInfo,
+		}
+		for _, file := range pkg.Syntax {
+			// Visit each file in the project/package
+			fileAst := visitFile(file, pkg.Fset, config)
+			filePath := filepath.Join(scratchDir, fmt.Sprintf("go-ast_%d.ast", counter))
+			counter += 1
+			if err := os.WriteFile(filePath, []byte(fileAst), 0644); err != nil {
+				panic(err)
+			}
+			files[fmt.Sprintf("|file://%s|", pkg.Fset.Position(file.Pos()).Filename)] =
+				fmt.Sprintf("|file://%s|", filePath)
+		}
+	}
+
+	// Finally, generate the term representing the file map that we can use to load the
+	// system in Rascal
+	var filelist = make([]string, 0, len(files))
+	for k, v := range files {
+		filelist = append(filelist, fmt.Sprintf("%s : %s", k, v))
+	}
+	return fmt.Sprintf("(%s)", strings.Join(filelist, ", "))
+}
 
 // parses file and makes sure there is no error in file input.
-func processFile(addLocs bool) string {
+func processFile(addLocs bool, addTypes bool) string {
 	fset := token.NewFileSet()
-	if file, err := parser.ParseFile(fset, filePath, nil, 0); err != nil {
+	if file, err := parser.ParseFile(fset, filePath, nil, parser.AllErrors); err != nil {
 		return fmt.Sprintf("errorFile(Could not process file %s, %s)", filePath, err.Error())
 	} else {
-		return visitFile(file, fset, addLocs)
+		conf := types.Config{
+			Importer: importer.ForCompiler(fset, "source", nil),
+			Error: func(err error) {
+				fmt.Printf("Found a type error: %v\n", err)
+			},
+		}
+		info := &types.Info{
+			Types: make(map[ast.Expr]types.TypeAndValue),
+			Defs:  make(map[*ast.Ident]types.Object),
+			Uses:  make(map[*ast.Ident]types.Object),
+		}
+		if _, err := conf.Check(filePath, fset, []*ast.File{file}, info); err != nil {
+			return fmt.Sprintf("errorFile(Could not process file %s, %s)", filePath, err.Error())
+		}
+		config := &Config{
+			addLocs:  addLocs,
+			addTypes: addTypes,
+			info:     info,
+		}
+		return visitFile(file, fset, config)
 	}
 }
 
@@ -29,14 +138,20 @@ func processExpr(exprText string) string {
 	if expr, err := parser.ParseExpr(exprText); err != nil {
 		return fmt.Sprintf("unknownExpr(%s)", err.Error())
 	} else {
-		return visitExpr(&expr, fset, false)
+		// TODO: See if we can create a checker just for this expression
+		config := &Config{
+			addLocs:  false,
+			addTypes: false,
+			info:     nil,
+		}
+		return visitExpr(&expr, fset, config)
 	}
 }
 
-func visitFile(node *ast.File, fset *token.FileSet, addLocs bool) string {
+func visitFile(node *ast.File, fset *token.FileSet, config *Config) string {
 	var decls []string
 	for i := 0; i < len(node.Decls); i++ {
-		decls = append(decls, visitDeclaration(&node.Decls[i], fset, addLocs))
+		decls = append(decls, visitDeclaration(&node.Decls[i], fset, config))
 	}
 	declString := strings.Join(decls, ",")
 
@@ -48,22 +163,15 @@ func visitFile(node *ast.File, fset *token.FileSet, addLocs bool) string {
 	//importString := strings.Join(imports, ",")
 
 	packageName := node.Name.Name
-
-	if addLocs {
-		locationString := computeLocation(fset, node.FileStart, node.FileEnd)
-		return fmt.Sprintf("file(\"%s\", [%s], at=%s)", packageName, declString, locationString)
-	} else {
-		return fmt.Sprintf("file(\"%s\", [%s])", packageName, declString)
-	}
-
+	return fmt.Sprintf("file(\"%s\", [%s]%s)", packageName, declString, addKeywordParameters(node, fset, config))
 }
 
-func visitDeclaration(node *ast.Decl, fset *token.FileSet, addLocs bool) string {
+func visitDeclaration(node *ast.Decl, fset *token.FileSet, config *Config) string {
 	switch d := (*node).(type) {
 	case *ast.GenDecl:
-		return visitGeneralDeclaration(d, fset, addLocs)
+		return visitGeneralDeclaration(d, fset, config)
 	case *ast.FuncDecl:
-		return visitFunctionDeclaration(d, fset, addLocs)
+		return visitFunctionDeclaration(d, fset, config)
 	default:
 		return "unknownDeclaration()" // This is an error, should panic here
 	}
@@ -77,326 +185,231 @@ func optionalNameToRascal(node *ast.Ident) string {
 	}
 }
 
-func visitSpec(node *ast.Spec, fset *token.FileSet, addLocs bool) string {
+func visitSpec(node *ast.Spec, fset *token.FileSet, config *Config) string {
 	switch d := (*node).(type) {
 	case *ast.ImportSpec:
-		return visitImportSpec(d, fset, addLocs)
+		return visitImportSpec(d, fset, config)
 	case *ast.ValueSpec:
-		return visitValueSpec(d, fset, addLocs)
+		return visitValueSpec(d, fset, config)
 	case *ast.TypeSpec:
-		return visitTypeSpec(d, fset, addLocs)
+		return visitTypeSpec(d, fset, config)
 	default:
 		return "unknownSpec()" // This is an error, should panic here
 	}
 }
 
-func visitImportSpec(node *ast.ImportSpec, fset *token.FileSet, addLocs bool) string {
+func visitImportSpec(node *ast.ImportSpec, fset *token.FileSet, config *Config) string {
 	specName := optionalNameToRascal(node.Name)
-	specPath := literalToRascal(node.Path, fset, addLocs)
-
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("importSpec(%s,%s,at=%s)", specName, specPath, locationString)
-	} else {
-		return fmt.Sprintf("importSpec(%s,%s)", specName, specPath)
-	}
+	specPath := literalToRascal(node.Path, fset, config)
+	return fmt.Sprintf("importSpec(%s,%s%s)", specName, specPath, addKeywordParameters(node, fset, config))
 }
 
-func visitValueSpec(node *ast.ValueSpec, fset *token.FileSet, addLocs bool) string {
+func visitValueSpec(node *ast.ValueSpec, fset *token.FileSet, config *Config) string {
 	var names []string
 	for i := 0; i < len(node.Names); i++ {
 		names = append(names, fmt.Sprintf("\"%s\"", node.Names[i].Name))
 	}
 	namesStr := fmt.Sprintf("[%s]", strings.Join(names, ","))
-	typeStr := visitOptionExpr(&node.Type, fset, addLocs)
-	values := visitExprList(node.Values, fset, addLocs)
+	typeStr := visitOptionExpr(&node.Type, fset, config)
+	values := visitExprList(node.Values, fset, config)
 
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("valueSpec(%s,%s,%s,at=%s)", namesStr, typeStr, values, locationString)
-	} else {
-		return fmt.Sprintf("valueSpec(%s,%s,%s)", namesStr, typeStr, values)
-	}
+	return fmt.Sprintf("valueSpec(%s,%s,%s%s)", namesStr, typeStr, values, addKeywordParameters(node, fset, config))
 }
 
-func visitTypeSpec(node *ast.TypeSpec, fset *token.FileSet, addLocs bool) string {
-	typeParams := visitFieldList(node.TypeParams, fset, addLocs)
-	typeStr := visitExpr(&node.Type, fset, addLocs)
+func visitTypeSpec(node *ast.TypeSpec, fset *token.FileSet, config *Config) string {
+	typeParams := visitFieldList(node.TypeParams, fset, config)
+	typeStr := visitExpr(&node.Type, fset, config)
 
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("typeSpec(\"%s\",%s,%s,at=%s)", node.Name.Name, typeParams, typeStr, locationString)
-	} else {
-		return fmt.Sprintf("typeSpec(\"%s\",%s,%s)", node.Name.Name, typeParams, typeStr)
-	}
+	return fmt.Sprintf("typeSpec(\"%s\",%s,%s%s)", node.Name.Name, typeParams, typeStr, addKeywordParameters(node, fset, config))
 }
 
-func visitSpecList(nodes []ast.Spec, fset *token.FileSet, addLocs bool) string {
+func visitSpecList(nodes []ast.Spec, fset *token.FileSet, config *Config) string {
 	var specs []string
 	for i := 0; nodes != nil && i < len(nodes); i++ {
-		specs = append(specs, visitSpec(&nodes[i], fset, addLocs))
+		specs = append(specs, visitSpec(&nodes[i], fset, config))
 	}
 	return fmt.Sprintf("[%s]", strings.Join(specs, ","))
 }
 
-func visitGeneralDeclaration(node *ast.GenDecl, fset *token.FileSet, addLocs bool) string {
+func visitGeneralDeclaration(node *ast.GenDecl, fset *token.FileSet, config *Config) string {
 	declType := declTypeToRascal(node.Tok)
-	specList := visitSpecList(node.Specs, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("genDecl(%s,%s,at=%s)", declType, specList, locationString)
-	} else {
-		return fmt.Sprintf("genDecl(%s,%s)", declType, specList)
-	}
+	specList := visitSpecList(node.Specs, fset, config)
+	return fmt.Sprintf("genDecl(%s,%s%s)", declType, specList, addKeywordParameters(node, fset, config))
 }
 
-func visitFunctionDeclaration(node *ast.FuncDecl, fset *token.FileSet, addLocs bool) string {
-	receivers := visitFieldList(node.Recv, fset, addLocs)
-	signature := visitFuncType(node.Type, fset, addLocs)
-	body := visitOptionalBlockStmt(node.Body, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("funDecl(\"%s\",%s,%s,%s,at=%s)", node.Name, receivers, signature, body, locationString)
-	} else {
-		return fmt.Sprintf("funDecl(\"%s\",%s,%s,%s)", node.Name, receivers, signature, body)
-	}
+func visitFunctionDeclaration(node *ast.FuncDecl, fset *token.FileSet, config *Config) string {
+	receivers := visitFieldList(node.Recv, fset, config)
+	signature := visitFuncType(node.Type, fset, config)
+	body := visitOptionalBlockStmt(node.Body, fset, config)
+	return fmt.Sprintf("funDecl(\"%s\",%s,%s,%s%s)", node.Name, receivers, signature, body, addKeywordParameters(node, fset, config))
 }
 
-func visitStmt(node *ast.Stmt, fset *token.FileSet, addLocs bool) string {
+func visitStmt(node *ast.Stmt, fset *token.FileSet, config *Config) string {
 	switch t := (*node).(type) {
 	case *ast.DeclStmt:
-		return visitDeclStmt(t, fset, addLocs)
+		return visitDeclStmt(t, fset, config)
 	case *ast.EmptyStmt:
-		return visitEmptyStmt(t, fset, addLocs)
+		return visitEmptyStmt(t, fset, config)
 	case *ast.LabeledStmt:
-		return visitLabeledStmt(t, fset, addLocs)
+		return visitLabeledStmt(t, fset, config)
 	case *ast.ExprStmt:
-		return visitExprStmt(t, fset, addLocs)
+		return visitExprStmt(t, fset, config)
 	case *ast.SendStmt:
-		return visitSendStmt(t, fset, addLocs)
+		return visitSendStmt(t, fset, config)
 	case *ast.IncDecStmt:
-		return visitIncDecStmt(t, fset, addLocs)
+		return visitIncDecStmt(t, fset, config)
 	case *ast.AssignStmt:
-		return visitAssignStmt(t, fset, addLocs)
+		return visitAssignStmt(t, fset, config)
 	case *ast.GoStmt:
-		return visitGoStmt(t, fset, addLocs)
+		return visitGoStmt(t, fset, config)
 	case *ast.DeferStmt:
-		return visitDeferStmt(t, fset, addLocs)
+		return visitDeferStmt(t, fset, config)
 	case *ast.ReturnStmt:
-		return visitReturnStmt(t, fset, addLocs)
+		return visitReturnStmt(t, fset, config)
 	case *ast.BranchStmt:
-		return visitBranchStmt(t, fset, addLocs)
+		return visitBranchStmt(t, fset, config)
 	case *ast.BlockStmt:
-		return visitBlockStmt(t, fset, addLocs)
+		return visitBlockStmt(t, fset, config)
 	case *ast.IfStmt:
-		return visitIfStmt(t, fset, addLocs)
+		return visitIfStmt(t, fset, config)
 	case *ast.CaseClause:
-		return visitCaseClause(t, fset, addLocs)
+		return visitCaseClause(t, fset, config)
 	case *ast.SwitchStmt:
-		return visitSwitchStmt(t, fset, addLocs)
+		return visitSwitchStmt(t, fset, config)
 	case *ast.TypeSwitchStmt:
-		return visitTypeSwitchStmt(t, fset, addLocs)
+		return visitTypeSwitchStmt(t, fset, config)
 	case *ast.CommClause:
-		return visitCommClause(t, fset, addLocs)
+		return visitCommClause(t, fset, config)
 	case *ast.SelectStmt:
-		return visitSelectStmt(t, fset, addLocs)
+		return visitSelectStmt(t, fset, config)
 	case *ast.ForStmt:
-		return visitForStmt(t, fset, addLocs)
+		return visitForStmt(t, fset, config)
 	case *ast.RangeStmt:
-		return visitRangeStmt(t, fset, addLocs)
+		return visitRangeStmt(t, fset, config)
 	default:
 		return fmt.Sprintf("unknownStmt(\"%s\")", reflect.TypeOf(node).Name())
 	}
 }
 
-func visitOptionStmt(node *ast.Stmt, fset *token.FileSet, addLocs bool) string {
+func visitOptionStmt(node *ast.Stmt, fset *token.FileSet, config *Config) string {
 	if *node == nil {
 		return "noStmt()"
 	} else {
-		return fmt.Sprintf("someStmt(%s)", visitStmt(node, fset, addLocs))
+		return fmt.Sprintf("someStmt(%s)", visitStmt(node, fset, config))
 	}
 }
 
-func visitOptionExpr(node *ast.Expr, fset *token.FileSet, addLocs bool) string {
+func visitOptionExpr(node *ast.Expr, fset *token.FileSet, config *Config) string {
 	if *node == nil {
 		return "noExpr()"
 	} else {
-		return fmt.Sprintf("someExpr(%s)", visitExpr(node, fset, addLocs))
+		return fmt.Sprintf("someExpr(%s)", visitExpr(node, fset, config))
 	}
 }
 
-func visitDeclStmt(node *ast.DeclStmt, fset *token.FileSet, addLocs bool) string {
-	declStr := visitDeclaration(&node.Decl, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("declStmt(%s,at=%s)", declStr, locationString)
-	} else {
-		return fmt.Sprintf("declStmt(%s)", declStr)
-	}
+func visitDeclStmt(node *ast.DeclStmt, fset *token.FileSet, config *Config) string {
+	declStr := visitDeclaration(&node.Decl, fset, config)
+	return fmt.Sprintf("declStmt(%s)", declStr, addKeywordParameters(node, fset, config))
 }
 
-func visitEmptyStmt(node *ast.EmptyStmt, fset *token.FileSet, addLocs bool) string {
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("emptyStmt(at=%s)", locationString)
-	} else {
-		return fmt.Sprintf("emptyStmt()")
-	}
+func visitEmptyStmt(node *ast.EmptyStmt, fset *token.FileSet, config *Config) string {
+	return fmt.Sprintf("emptyStmt(%s)", addKeywordParameters(node, fset, config))
 }
 
-func visitLabeledStmt(node *ast.LabeledStmt, fset *token.FileSet, addLocs bool) string {
+func visitLabeledStmt(node *ast.LabeledStmt, fset *token.FileSet, config *Config) string {
 	labelStr := labelToRascal(node.Label)
-	stmtStr := visitStmt(&node.Stmt, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("labeledStmt(%s,%s,at=%s)", labelStr, stmtStr, locationString)
-	} else {
-		return fmt.Sprintf("labeledStmt(%s,%s)", labelStr, stmtStr)
-	}
+	stmtStr := visitStmt(&node.Stmt, fset, config)
+	return fmt.Sprintf("labeledStmt(%s,%s%s)", labelStr, stmtStr, addKeywordParameters(node, fset, config))
 }
 
-func visitExprStmt(node *ast.ExprStmt, fset *token.FileSet, addLocs bool) string {
-	exprStr := visitExpr(&node.X, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("exprStmt(%s,at=%s)", exprStr, locationString)
-	} else {
-		return fmt.Sprintf("exprStmt(%s)", exprStr)
-	}
+func visitExprStmt(node *ast.ExprStmt, fset *token.FileSet, config *Config) string {
+	exprStr := visitExpr(&node.X, fset, config)
+	return fmt.Sprintf("exprStmt(%s%s)", exprStr, addKeywordParameters(node, fset, config))
 }
 
-func visitSendStmt(node *ast.SendStmt, fset *token.FileSet, addLocs bool) string {
-	chanStr := visitExpr(&node.Chan, fset, addLocs)
-	valStr := visitExpr(&node.Value, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("sendStmt(%s,%s,at=%s)", chanStr, valStr, locationString)
-	} else {
-		return fmt.Sprintf("sendStmt(%s,%s)", chanStr, valStr)
-	}
+func visitSendStmt(node *ast.SendStmt, fset *token.FileSet, config *Config) string {
+	chanStr := visitExpr(&node.Chan, fset, config)
+	valStr := visitExpr(&node.Value, fset, config)
+	return fmt.Sprintf("sendStmt(%s,%s%s)", chanStr, valStr, addKeywordParameters(node, fset, config))
 }
 
-func visitIncDecStmt(node *ast.IncDecStmt, fset *token.FileSet, addLocs bool) string {
+func visitIncDecStmt(node *ast.IncDecStmt, fset *token.FileSet, config *Config) string {
 	opStr := opToRascal(node.Tok)
-	exprStr := visitExpr(&node.X, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("incDecStmt(%s,%s,at=%s)", opStr, exprStr, locationString)
-	} else {
-		return fmt.Sprintf("incDecStmt(%s,%s)", opStr, exprStr)
-	}
+	exprStr := visitExpr(&node.X, fset, config)
+
+	return fmt.Sprintf("incDecStmt(%s,%s%s)", opStr, exprStr, addKeywordParameters(node, fset, config))
 }
 
-func visitAssignStmt(node *ast.AssignStmt, fset *token.FileSet, addLocs bool) string {
+func visitAssignStmt(node *ast.AssignStmt, fset *token.FileSet, config *Config) string {
 	assignOp := assignmentOpToRascal(node.Tok)
-	left := visitExprList(node.Lhs, fset, addLocs)
-	right := visitExprList(node.Rhs, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("assignStmt(%s,%s,%s,at=%s)", left, right, assignOp, locationString)
-	} else {
-		return fmt.Sprintf("assignStmt(%s,%s,%s)", left, right, assignOp)
-	}
+	left := visitExprList(node.Lhs, fset, config)
+	right := visitExprList(node.Rhs, fset, config)
+	return fmt.Sprintf("assignStmt(%s,%s,%s%s)", left, right, assignOp, addKeywordParameters(node, fset, config))
 }
 
-func visitGoStmt(node *ast.GoStmt, fset *token.FileSet, addLocs bool) string {
-	exprStr := visitCallExpr(node.Call, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("goStmt(%s,at=%s)", exprStr, locationString)
-	} else {
-		return fmt.Sprintf("goStmt(%s)", exprStr)
-	}
+func visitGoStmt(node *ast.GoStmt, fset *token.FileSet, config *Config) string {
+	exprStr := visitCallExpr(node.Call, fset, config)
+	return fmt.Sprintf("goStmt(%s%s)", exprStr, addKeywordParameters(node, fset, config))
 }
 
-func visitDeferStmt(node *ast.DeferStmt, fset *token.FileSet, addLocs bool) string {
-	exprStr := visitCallExpr(node.Call, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("deferStmt(%s,at=%s)", exprStr, locationString)
-	} else {
-		return fmt.Sprintf("deferStmt(%s)", exprStr)
-	}
+func visitDeferStmt(node *ast.DeferStmt, fset *token.FileSet, config *Config) string {
+	exprStr := visitCallExpr(node.Call, fset, config)
+	return fmt.Sprintf("deferStmt(%s%s)", exprStr, addKeywordParameters(node, fset, config))
 }
 
-func visitReturnStmt(node *ast.ReturnStmt, fset *token.FileSet, addLocs bool) string {
-	results := visitExprList(node.Results, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("returnStmt(%s,at=%s)", results, locationString)
-	} else {
-		return fmt.Sprintf("returnStmt(%s)", results)
-	}
+func visitReturnStmt(node *ast.ReturnStmt, fset *token.FileSet, config *Config) string {
+	results := visitExprList(node.Results, fset, config)
+	return fmt.Sprintf("returnStmt(%s%s)", results, addKeywordParameters(node, fset, config))
 }
 
-func visitBranchStmt(node *ast.BranchStmt, fset *token.FileSet, addLocs bool) string {
+func visitBranchStmt(node *ast.BranchStmt, fset *token.FileSet, config *Config) string {
 	typeStr := branchTypeToRascal(node.Tok)
 	labelStr := labelToRascal(node.Label)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("branchStmt(%s,%s,at=%s)", typeStr, labelStr, locationString)
-	} else {
-		return fmt.Sprintf("branchStmt(%s,%s)", typeStr, labelStr)
-	}
+	return fmt.Sprintf("branchStmt(%s,%s%s)", typeStr, labelStr, addKeywordParameters(node, fset, config))
 }
 
-func visitOptionalBlockStmt(node *ast.BlockStmt, fset *token.FileSet, addLocs bool) string {
+func visitOptionalBlockStmt(node *ast.BlockStmt, fset *token.FileSet, config *Config) string {
 	if node == nil {
 		return "noStmt()"
 	} else {
-		return fmt.Sprintf("someStmt(%s)", visitBlockStmt(node, fset, addLocs))
+		return fmt.Sprintf("someStmt(%s)", visitBlockStmt(node, fset, config))
 	}
 }
 
-func visitBlockStmt(node *ast.BlockStmt, fset *token.FileSet, addLocs bool) string {
-	stmts := visitStmtList(node.List, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("blockStmt(%s,at=%s)", stmts, locationString)
-	} else {
-		return fmt.Sprintf("blockStmt(%s)", stmts)
-	}
+func visitBlockStmt(node *ast.BlockStmt, fset *token.FileSet, config *Config) string {
+	stmts := visitStmtList(node.List, fset, config)
+	return fmt.Sprintf("blockStmt(%s%s)", stmts, addKeywordParameters(node, fset, config))
 }
 
-func visitIfStmt(node *ast.IfStmt, fset *token.FileSet, addLocs bool) string {
-	initStmt := visitOptionStmt(&node.Init, fset, addLocs)
-	condExpr := visitExpr(&node.Cond, fset, addLocs)
-	body := visitBlockStmt(node.Body, fset, addLocs)
-	elseStmt := visitOptionStmt(&node.Else, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("ifStmt(%s,%s,%s,%s,at=%s)", initStmt, condExpr, body, elseStmt, locationString)
-	} else {
-		return fmt.Sprintf("ifStmt(%s,%s,%s,%s)", initStmt, condExpr, body, elseStmt)
-	}
+func visitIfStmt(node *ast.IfStmt, fset *token.FileSet, config *Config) string {
+	initStmt := visitOptionStmt(&node.Init, fset, config)
+	condExpr := visitExpr(&node.Cond, fset, config)
+	body := visitBlockStmt(node.Body, fset, config)
+	elseStmt := visitOptionStmt(&node.Else, fset, config)
+	return fmt.Sprintf("ifStmt(%s,%s,%s,%s%s)", initStmt, condExpr, body, elseStmt, addKeywordParameters(node, fset, config))
 }
 
-func caseToRascal(nodes []ast.Expr, fset *token.FileSet, addLocs bool) string {
+func caseToRascal(nodes []ast.Expr, fset *token.FileSet, config *Config) string {
 	if nodes != nil {
-		return fmt.Sprintf("regularCase(%s)", visitExprList(nodes, fset, addLocs))
+		return fmt.Sprintf("regularCase(%s)", visitExprList(nodes, fset, config))
 	} else {
 		return "defaultCase()"
 	}
 }
 
-func visitCaseClause(node *ast.CaseClause, fset *token.FileSet, addLocs bool) string {
-	caseStr := caseToRascal(node.List, fset, addLocs)
-	stmtsString := visitStmtList(node.Body, fset, addLocs)
+func visitCaseClause(node *ast.CaseClause, fset *token.FileSet, config *Config) string {
+	caseStr := caseToRascal(node.List, fset, config)
+	stmtsString := visitStmtList(node.Body, fset, config)
 
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("caseClause(%s,%s,at=%s)", caseStr, stmtsString, locationString)
-	} else {
-		return fmt.Sprintf("caseClause(%s,%s)", caseStr, stmtsString)
-	}
+	return fmt.Sprintf("caseClause(%s,%s%s)", caseStr, stmtsString, addKeywordParameters(node, fset, config))
 }
 
-func visitCaseClauseList(node *ast.BlockStmt, fset *token.FileSet, addLocs bool) string {
+func visitCaseClauseList(node *ast.BlockStmt, fset *token.FileSet, config *Config) string {
 	var cases []string
 	for i := 0; node != nil && node.List != nil && i < len(node.List); i++ {
 		nodeAsCase, ok := node.List[i].(*ast.CaseClause)
 		if ok {
-			cases = append(cases, visitCaseClause(nodeAsCase, fset, addLocs))
+			cases = append(cases, visitCaseClause(nodeAsCase, fset, config))
 		} else {
 			cases = append(cases, "invalidCaseClause()")
 		}
@@ -404,56 +417,41 @@ func visitCaseClauseList(node *ast.BlockStmt, fset *token.FileSet, addLocs bool)
 	return fmt.Sprintf("[%s]", strings.Join(cases, ","))
 }
 
-func visitSwitchStmt(node *ast.SwitchStmt, fset *token.FileSet, addLocs bool) string {
-	init := visitOptionStmt(&node.Init, fset, addLocs)
-	tag := visitOptionExpr(&node.Tag, fset, addLocs)
-	block := visitCaseClauseList(node.Body, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("switchStmt(%s,%s,%s,at=%s)", init, tag, block, locationString)
-	} else {
-		return fmt.Sprintf("switchStmt(%s,%s,%s)", init, tag, block)
-	}
+func visitSwitchStmt(node *ast.SwitchStmt, fset *token.FileSet, config *Config) string {
+	init := visitOptionStmt(&node.Init, fset, config)
+	tag := visitOptionExpr(&node.Tag, fset, config)
+	block := visitCaseClauseList(node.Body, fset, config)
+	return fmt.Sprintf("switchStmt(%s,%s,%s%s)", init, tag, block, addKeywordParameters(node, fset, config))
 }
 
-func visitTypeSwitchStmt(node *ast.TypeSwitchStmt, fset *token.FileSet, addLocs bool) string {
-	init := visitOptionStmt(&node.Init, fset, addLocs)
-	assign := visitStmt(&node.Assign, fset, addLocs)
-	block := visitCaseClauseList(node.Body, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("typeSwitchStmt(%s,%s,%s,at=%s)", init, assign, block, locationString)
-	} else {
-		return fmt.Sprintf("typeSwitchStmt(%s,%s,%s)", init, assign, block)
-	}
+func visitTypeSwitchStmt(node *ast.TypeSwitchStmt, fset *token.FileSet, config *Config) string {
+	init := visitOptionStmt(&node.Init, fset, config)
+	assign := visitStmt(&node.Assign, fset, config)
+	block := visitCaseClauseList(node.Body, fset, config)
+	return fmt.Sprintf("typeSwitchStmt(%s,%s,%s%s)", init, assign, block, addKeywordParameters(node, fset, config))
 }
 
-func clauseToRascal(node *ast.Stmt, fset *token.FileSet, addLocs bool) string {
+func clauseToRascal(node *ast.Stmt, fset *token.FileSet, config *Config) string {
 	if *node == nil {
 		return "defaultComm()"
 	} else {
-		return fmt.Sprintf("regularComm(%s)", visitStmt(node, fset, addLocs))
+		return fmt.Sprintf("regularComm(%s)", visitStmt(node, fset, config))
 	}
 }
 
-func visitCommClause(node *ast.CommClause, fset *token.FileSet, addLocs bool) string {
-	clauseStr := clauseToRascal(&node.Comm, fset, addLocs)
-	stmtsString := visitStmtList(node.Body, fset, addLocs)
+func visitCommClause(node *ast.CommClause, fset *token.FileSet, config *Config) string {
+	clauseStr := clauseToRascal(&node.Comm, fset, config)
+	stmtsString := visitStmtList(node.Body, fset, config)
 
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("commClause(%s,%s,at=%s)", clauseStr, stmtsString, locationString)
-	} else {
-		return fmt.Sprintf("commClause(%s,%s)", clauseStr, stmtsString)
-	}
+	return fmt.Sprintf("commClause(%s,%s%s)", clauseStr, stmtsString, addKeywordParameters(node, fset, config))
 }
 
-func visitCommClauseList(node *ast.BlockStmt, fset *token.FileSet, addLocs bool) string {
+func visitCommClauseList(node *ast.BlockStmt, fset *token.FileSet, config *Config) string {
 	var clauses []string
 	for i := 0; node != nil && node.List != nil && i < len(node.List); i++ {
 		nodeAsClause, ok := node.List[i].(*ast.CommClause)
 		if ok {
-			clauses = append(clauses, visitCommClause(nodeAsClause, fset, addLocs))
+			clauses = append(clauses, visitCommClause(nodeAsClause, fset, config))
 		} else {
 			clauses = append(clauses, "invalidCommClause()")
 		}
@@ -461,239 +459,158 @@ func visitCommClauseList(node *ast.BlockStmt, fset *token.FileSet, addLocs bool)
 	return fmt.Sprintf("[%s]", strings.Join(clauses, ","))
 }
 
-func visitSelectStmt(node *ast.SelectStmt, fset *token.FileSet, addLocs bool) string {
-	clauses := visitCommClauseList(node.Body, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("selectStmt(%s,at=%s)", clauses, locationString)
-	} else {
-		return fmt.Sprintf("selectStmt(%s)", clauses)
-	}
+func visitSelectStmt(node *ast.SelectStmt, fset *token.FileSet, config *Config) string {
+	clauses := visitCommClauseList(node.Body, fset, config)
+	return fmt.Sprintf("selectStmt(%s%s)", clauses, addKeywordParameters(node, fset, config))
 }
 
-func visitForStmt(node *ast.ForStmt, fset *token.FileSet, addLocs bool) string {
-	init := visitOptionStmt(&node.Init, fset, addLocs)
-	post := visitOptionStmt(&node.Post, fset, addLocs)
-	cond := visitOptionExpr(&node.Cond, fset, addLocs)
-	block := visitBlockStmt(node.Body, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("forStmt(%s,%s,%s,%s,at=%s)", init, cond, post, block, locationString)
-	} else {
-		return fmt.Sprintf("forStmt(%s,%s,%s,%s)", init, cond, post, block)
-	}
+func visitForStmt(node *ast.ForStmt, fset *token.FileSet, config *Config) string {
+	init := visitOptionStmt(&node.Init, fset, config)
+	post := visitOptionStmt(&node.Post, fset, config)
+	cond := visitOptionExpr(&node.Cond, fset, config)
+	block := visitBlockStmt(node.Body, fset, config)
+	return fmt.Sprintf("forStmt(%s,%s,%s,%s%s)", init, cond, post, block, addKeywordParameters(node, fset, config))
 }
 
-func visitRangeStmt(node *ast.RangeStmt, fset *token.FileSet, addLocs bool) string {
-	key := visitOptionExpr(&node.Key, fset, addLocs)
-	value := visitOptionExpr(&node.Value, fset, addLocs)
+func visitRangeStmt(node *ast.RangeStmt, fset *token.FileSet, config *Config) string {
+	key := visitOptionExpr(&node.Key, fset, config)
+	value := visitOptionExpr(&node.Value, fset, config)
 	assignOp := assignmentOpToRascal(node.Tok)
-	rangeExpr := visitExpr(&node.X, fset, addLocs)
-	block := visitBlockStmt(node.Body, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("rangeStmt(%s,%s,%s,%s,%s,at=%s)", key, value, assignOp, rangeExpr, block, locationString)
-	} else {
-		return fmt.Sprintf("rangeStmt(%s,%s,%s,%s,%s)", key, value, assignOp, rangeExpr, block)
-	}
+	rangeExpr := visitExpr(&node.X, fset, config)
+	block := visitBlockStmt(node.Body, fset, config)
+	return fmt.Sprintf("rangeStmt(%s,%s,%s,%s,%s%s)", key, value, assignOp, rangeExpr, block, addKeywordParameters(node, fset, config))
 }
 
-func visitExpr(node *ast.Expr, fset *token.FileSet, addLocs bool) string {
+func visitExpr(node *ast.Expr, fset *token.FileSet, config *Config) string {
 	switch t := (*node).(type) {
 
 	case *ast.Ident:
-		return visitIdent(t, fset, addLocs)
+		return visitIdent(t, fset, config)
 
 	case *ast.Ellipsis:
-		return visitEllipsis(t, fset, addLocs)
+		return visitEllipsis(t, fset, config)
 
 	case *ast.BasicLit:
-		return visitBasicLit(t, fset, addLocs)
+		return visitBasicLit(t, fset, config)
 
 	case *ast.FuncLit:
-		return visitFuncLit(t, fset, addLocs)
+		return visitFuncLit(t, fset, config)
 
 	case *ast.CompositeLit:
-		return visitCompositeLit(t, fset, addLocs)
+		return visitCompositeLit(t, fset, config)
 
 	case *ast.ParenExpr:
-		return visitParenExpr(t, fset, addLocs)
+		return visitParenExpr(t, fset, config)
 
 	case *ast.SelectorExpr:
-		return visitSelectorExpr(t, fset, addLocs)
+		return visitSelectorExpr(t, fset, config)
 
 	case *ast.IndexExpr:
-		return visitIndexExpr(t, fset, addLocs)
+		return visitIndexExpr(t, fset, config)
 
 	case *ast.IndexListExpr:
-		return visitIndexListExpr(t, fset, addLocs)
+		return visitIndexListExpr(t, fset, config)
 
 	case *ast.SliceExpr:
-		return visitSliceExpr(t, fset, addLocs)
+		return visitSliceExpr(t, fset, config)
 
 	case *ast.TypeAssertExpr:
-		return visitTypeAssertExpr(t, fset, addLocs)
+		return visitTypeAssertExpr(t, fset, config)
 
 	case *ast.CallExpr:
-		return visitCallExpr(t, fset, addLocs)
+		return visitCallExpr(t, fset, config)
 
 	case *ast.StarExpr:
-		return visitStarExpr(t, fset, addLocs)
+		return visitStarExpr(t, fset, config)
 
 	case *ast.UnaryExpr:
-		return visitUnaryExpr(t, fset, addLocs)
+		return visitUnaryExpr(t, fset, config)
 
 	case *ast.BinaryExpr:
-		return visitBinaryExpr(t, fset, addLocs)
+		return visitBinaryExpr(t, fset, config)
 
 	case *ast.KeyValueExpr:
-		return visitKeyValueExpr(t, fset, addLocs)
+		return visitKeyValueExpr(t, fset, config)
 
 	case *ast.ArrayType:
-		return visitArrayType(t, fset, addLocs)
+		return visitArrayType(t, fset, config)
 
 	case *ast.StructType:
-		return visitStructType(t, fset, addLocs)
+		return visitStructType(t, fset, config)
 
 	case *ast.FuncType:
-		return visitFuncType(t, fset, addLocs)
+		return visitFuncType(t, fset, config)
 
 	case *ast.InterfaceType:
-		return visitInterfaceType(t, fset, addLocs)
+		return visitInterfaceType(t, fset, config)
 
 	case *ast.MapType:
-		return visitMapType(t, fset, addLocs)
+		return visitMapType(t, fset, config)
 
 	case *ast.ChanType:
-		return visitChanType(t, fset, addLocs)
+		return visitChanType(t, fset, config)
 
 	default:
 		return fmt.Sprintf("unknownExpr(\"%s\")", reflect.TypeOf(node).Name())
 	}
 }
 
-func visitIdent(node *ast.Ident, fset *token.FileSet, addLocs bool) string {
+func visitIdent(node *ast.Ident, fset *token.FileSet, config *Config) string {
 	name := node.Name
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("ident(\"%s\",at=%s)", name, locationString)
-	} else {
-		return fmt.Sprintf("ident(\"%s\")", name)
-	}
+	return fmt.Sprintf("ident(\"%s\"%s)", name, addKeywordParameters(node, fset, config))
 }
-func visitEllipsis(node *ast.Ellipsis, fset *token.FileSet, addLocs bool) string {
-	elt := visitOptionExpr(&node.Elt, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("ellipsis(%s,at=%s)", elt, locationString)
-	} else {
-		return fmt.Sprintf("ellipsis(%s)", elt)
-	}
+func visitEllipsis(node *ast.Ellipsis, fset *token.FileSet, config *Config) string {
+	elt := visitOptionExpr(&node.Elt, fset, config)
+	return fmt.Sprintf("ellipsis(%s%s)", elt, addKeywordParameters(node, fset, config))
 }
 
-func literalToRascal(node *ast.BasicLit, fset *token.FileSet, addLocs bool) string {
-	locationString := computeLocation(fset, node.Pos(), node.End())
-
+func literalToRascal(node *ast.BasicLit, fset *token.FileSet, config *Config) string {
 	switch node.Kind {
 	case token.INT:
 		if parsed, err := strconv.ParseInt(node.Value, 0, 64); err == nil {
-			if addLocs {
-				return fmt.Sprintf("literalInt(%d,at=%s)", parsed, locationString)
-			} else {
-				return fmt.Sprintf("literalInt(%d)", parsed)
-			}
+			return fmt.Sprintf("literalInt(%d%s)", parsed, addKeywordParameters(node, fset, config))
 		} else if parsed, err := strconv.ParseUint(node.Value, 0, 64); err == nil {
-			if addLocs {
-				return fmt.Sprintf("literalInt(%d,at=%s)", parsed, locationString)
-			} else {
-				return fmt.Sprintf("literalInt(%d)", parsed)
-			}
+			return fmt.Sprintf("literalInt(%d%s)", parsed, addKeywordParameters(node, fset, config))
 		} else if parsed, err := strconv.ParseFloat(node.Value, 64); err == nil {
 			// NOTE: This is here because we can include an INT literal as an argument
 			// when setting up a floating-point number that is outside the possible
 			// bounds of an int64, e.g.,340282346638528860000000000000000000000. This
 			// is coerced into a float in that case, but cannot be represented as either
 			// an int32 or an int64.
-			if addLocs {
-				return fmt.Sprintf("literalFloat(%f,at=%s)", parsed, locationString)
-			} else {
-				return fmt.Sprintf("literalFloat(%f)", parsed)
-			}
+			return fmt.Sprintf("literalFloat(%f%s)", parsed, addKeywordParameters(node, fset, config))
 		} else {
-			if addLocs {
-				return fmt.Sprintf("unknownLiteral(\"%s\",at=%s)", node.Value, locationString)
-			} else {
-				return fmt.Sprintf("unknownLiteral(\"%s\")", node.Value)
-			}
+			return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 		}
 	case token.FLOAT:
 		if parsed, err := strconv.ParseFloat(node.Value, 64); err == nil {
-			if addLocs {
-				return fmt.Sprintf("literalFloat(%f,at=%s)", parsed, locationString)
-			} else {
-				return fmt.Sprintf("literalFloat(%f)", parsed)
-			}
+			return fmt.Sprintf("literalFloat(%f)%s", parsed, addKeywordParameters(node, fset, config))
 		} else {
-			if addLocs {
-				return fmt.Sprintf("unknownLiteral(\"%s\",at=%s)", node.Value, locationString)
-			} else {
-				return fmt.Sprintf("unknownLiteral(\"%s\")", node.Value)
-			}
+			return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 		}
 	case token.CHAR:
-		if addLocs {
-			return fmt.Sprintf("literalChar(%s,at=%s)", rascalizeChar(node.Value), locationString)
-		} else {
-			return fmt.Sprintf("literalChar(%s)", rascalizeChar(node.Value))
-		}
+		return fmt.Sprintf("literalChar(%s%s)", rascalizeChar(node.Value), addKeywordParameters(node, fset, config))
 	case token.STRING:
-		if addLocs {
-			return fmt.Sprintf("literalString(%s,at=%s)", rascalizeString(node.Value), locationString)
-		} else {
-			return fmt.Sprintf("literalString(%s)", rascalizeString(node.Value))
-		}
+		return fmt.Sprintf("literalString(%s)%s", rascalizeString(node.Value), addKeywordParameters(node, fset, config))
 	case token.IMAG:
 		if ic, err := strconv.ParseComplex(node.Value, 128); err == nil {
-			if addLocs {
-				return fmt.Sprintf("literalImaginary(%f,%f,at=%s)", real(ic), imag(ic), locationString)
-			} else {
-				return fmt.Sprintf("literalImaginary(%f,%f)", real(ic), imag(ic))
-			}
+			return fmt.Sprintf("literalImaginary(%f,%f%s)", real(ic), imag(ic), addKeywordParameters(node, fset, config))
 		} else {
-			if addLocs {
-				return fmt.Sprintf("unknownLiteral(\"%s\",at=%s)", node.Value, locationString)
-			} else {
-				return fmt.Sprintf("unknownLiteral(\"%s\")", node.Value)
-			}
+			return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 		}
 	default:
-		if addLocs {
-			return fmt.Sprintf("unknownLiteral(\"%s\",at=%s)", node.Value, locationString)
-		} else {
-			return fmt.Sprintf("unknownLiteral(\"%s\")", node.Value)
-		}
+		return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 	}
 }
 
-func visitBasicLit(node *ast.BasicLit, fset *token.FileSet, addLocs bool) string {
-	value := literalToRascal(node, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("basicLit(%s,at=%s)", value, locationString)
-	} else {
-		return fmt.Sprintf("basicLit(%s)", value)
-	}
+func visitBasicLit(node *ast.BasicLit, fset *token.FileSet, config *Config) string {
+	value := literalToRascal(node, fset, config)
+	return fmt.Sprintf("basicLit(%s%s)", value, addKeywordParameters(node, fset, config))
 }
 
-func visitFuncLit(node *ast.FuncLit, fset *token.FileSet, addLocs bool) string {
-	typeStr := visitFuncType(node.Type, fset, addLocs)
-	body := visitBlockStmt(node.Body, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("funcLit(%s,%s,at=%s)", typeStr, body, locationString)
-	} else {
-		return fmt.Sprintf("funcLit(%s,%s)", typeStr, body)
-	}
+func visitFuncLit(node *ast.FuncLit, fset *token.FileSet, config *Config) string {
+	typeStr := visitFuncType(node.Type, fset, config)
+	body := visitBlockStmt(node.Body, fset, config)
+	return fmt.Sprintf("funcLit(%s,%s%s)", typeStr, body, addKeywordParameters(node, fset, config))
 }
 func boolToRascal(val bool) string {
 	if val {
@@ -702,208 +619,124 @@ func boolToRascal(val bool) string {
 		return "false"
 	}
 }
-func visitCompositeLit(node *ast.CompositeLit, fset *token.FileSet, addLocs bool) string {
-	typeStr := visitOptionExpr(&node.Type, fset, addLocs)
-	elts := visitExprList(node.Elts, fset, addLocs)
+func visitCompositeLit(node *ast.CompositeLit, fset *token.FileSet, config *Config) string {
+	typeStr := visitOptionExpr(&node.Type, fset, config)
+	elts := visitExprList(node.Elts, fset, config)
 
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("compositeLit(%s,%s,%s,at=%s)", typeStr, elts, boolToRascal(node.Incomplete), locationString)
-	} else {
-		return fmt.Sprintf("compositeLit(%s,%s,%s)", typeStr, elts, boolToRascal(node.Incomplete))
-	}
+	return fmt.Sprintf("compositeLit(%s,%s,%s%s)", typeStr, elts, boolToRascal(node.Incomplete), addKeywordParameters(node, fset, config))
 }
 
-func visitParenExpr(node *ast.ParenExpr, fset *token.FileSet, addLocs bool) string {
+func visitParenExpr(node *ast.ParenExpr, fset *token.FileSet, config *Config) string {
 	// We are building a tree, we do not need to keep explicit parens
-	return visitExpr(&node.X, fset, addLocs)
+	return visitExpr(&node.X, fset, config)
 }
 
-func visitSelectorExpr(node *ast.SelectorExpr, fset *token.FileSet, addLocs bool) string {
-	exprStr := visitExpr(&node.X, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("selectorExpr(%s,\"%s\",at=%s)", exprStr, node.Sel.Name, locationString)
-	} else {
-		return fmt.Sprintf("selectorExpr(%s,\"%s\")", exprStr, node.Sel.Name)
-	}
+func visitSelectorExpr(node *ast.SelectorExpr, fset *token.FileSet, config *Config) string {
+	exprStr := visitExpr(&node.X, fset, config)
+	return fmt.Sprintf("selectorExpr(%s,\"%s\"%s)", exprStr, node.Sel.Name, addKeywordParameters(node, fset, config))
 }
-func visitIndexExpr(node *ast.IndexExpr, fset *token.FileSet, addLocs bool) string {
-	x := visitExpr(&node.X, fset, addLocs)
-	index := visitExpr(&node.Index, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("indexExpr(%s,%s,at=%s)", x, index, locationString)
-	} else {
-		return fmt.Sprintf("indexExpr(%s,%s)", x, index)
-	}
+func visitIndexExpr(node *ast.IndexExpr, fset *token.FileSet, config *Config) string {
+	x := visitExpr(&node.X, fset, config)
+	index := visitExpr(&node.Index, fset, config)
+	return fmt.Sprintf("indexExpr(%s,%s%s)", x, index, addKeywordParameters(node, fset, config))
 }
-func visitIndexListExpr(node *ast.IndexListExpr, fset *token.FileSet, addLocs bool) string {
-	x := visitExpr(&node.X, fset, addLocs)
-	indices := visitExprList(node.Indices, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("indexListExpr(%s,%s,at=%s)", x, indices, locationString)
-	} else {
-		return fmt.Sprintf("indexListExpr(%s,%s)", x, indices)
-	}
+func visitIndexListExpr(node *ast.IndexListExpr, fset *token.FileSet, config *Config) string {
+	x := visitExpr(&node.X, fset, config)
+	indices := visitExprList(node.Indices, fset, config)
+	return fmt.Sprintf("indexListExpr(%s,%s%s)", x, indices, addKeywordParameters(node, fset, config))
 }
-func visitSliceExpr(node *ast.SliceExpr, fset *token.FileSet, addLocs bool) string {
-	x := visitExpr(&node.X, fset, addLocs)
-	low := visitOptionExpr(&node.Low, fset, addLocs)
-	high := visitOptionExpr(&node.High, fset, addLocs)
-	max := visitOptionExpr(&node.Max, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("sliceExpr(%s,%s,%s,%s,%s,at=%s)", x, low, high, max, boolToRascal(node.Slice3), locationString)
-	} else {
-		return fmt.Sprintf("sliceExpr(%s,%s,%s,%s,%s)", x, low, high, max, boolToRascal(node.Slice3))
-	}
+func visitSliceExpr(node *ast.SliceExpr, fset *token.FileSet, config *Config) string {
+	x := visitExpr(&node.X, fset, config)
+	low := visitOptionExpr(&node.Low, fset, config)
+	high := visitOptionExpr(&node.High, fset, config)
+	maxnum := visitOptionExpr(&node.Max, fset, config)
+	return fmt.Sprintf("sliceExpr(%s,%s,%s,%s,%s%s)", x, low, high, maxnum, boolToRascal(node.Slice3), addKeywordParameters(node, fset, config))
 }
-func visitTypeAssertExpr(node *ast.TypeAssertExpr, fset *token.FileSet, addLocs bool) string {
-	x := visitExpr(&node.X, fset, addLocs)
-	types := visitOptionExpr(&node.Type, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("typeAssertExpr(%s,%s,at=%s)", x, types, locationString)
-	} else {
-		return fmt.Sprintf("typeAssertExpr(%s,%s)", x, types)
-	}
+func visitTypeAssertExpr(node *ast.TypeAssertExpr, fset *token.FileSet, config *Config) string {
+	x := visitExpr(&node.X, fset, config)
+	exprTypes := visitOptionExpr(&node.Type, fset, config)
+	return fmt.Sprintf("typeAssertExpr(%s,%s%s)", x, exprTypes, addKeywordParameters(node, fset, config))
 }
-func visitCallExpr(node *ast.CallExpr, fset *token.FileSet, addLocs bool) string {
-	fun := visitExpr(&node.Fun, fset, addLocs)
-	args := visitExprList(node.Args, fset, addLocs)
+func visitCallExpr(node *ast.CallExpr, fset *token.FileSet, config *Config) string {
+	fun := visitExpr(&node.Fun, fset, config)
+	args := visitExprList(node.Args, fset, config)
 	hasEllipses := boolToRascal(node.Ellipsis != token.NoPos)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("callExpr(%s,%s,%s,at=%s)", fun, args, hasEllipses, locationString)
-	} else {
-		return fmt.Sprintf("callExpr(%s,%s,%s)", fun, args, hasEllipses)
-	}
+	return fmt.Sprintf("callExpr(%s,%s,%s%s)", fun, args, hasEllipses, addKeywordParameters(node, fset, config))
 }
-func visitStarExpr(node *ast.StarExpr, fset *token.FileSet, addLocs bool) string {
-	x := visitExpr(&node.X, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("starExpr(%s,at=%s)", x, locationString)
-	} else {
-		return fmt.Sprintf("starExpr(%s)", x)
-	}
+func visitStarExpr(node *ast.StarExpr, fset *token.FileSet, config *Config) string {
+	x := visitExpr(&node.X, fset, config)
+	return fmt.Sprintf("starExpr(%s%s)", x, addKeywordParameters(node, fset, config))
 }
-func visitUnaryExpr(node *ast.UnaryExpr, fset *token.FileSet, addLocs bool) string {
-	x := visitExpr(&node.X, fset, addLocs)
+func visitUnaryExpr(node *ast.UnaryExpr, fset *token.FileSet, config *Config) string {
+	x := visitExpr(&node.X, fset, config)
 	tok := opToRascal(node.Op)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("unaryExpr(%s,%s, at=%s)", x, tok, locationString)
-	} else {
-		return fmt.Sprintf("unaryExpr(%s,%s)", x, tok)
-	}
-}
-func visitBinaryExpr(node *ast.BinaryExpr, fset *token.FileSet, addLocs bool) string {
-	x := visitExpr(&node.X, fset, addLocs)
-	tok := opToRascal(node.Op)
-	y := visitExpr(&node.Y, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("binaryExpr(%s,%s,%s,at=%s)", x, y, tok, locationString)
-	} else {
-		return fmt.Sprintf("binaryExpr(%s,%s,%s)", x, y, tok)
-	}
-}
-func visitKeyValueExpr(node *ast.KeyValueExpr, fset *token.FileSet, addLocs bool) string {
-	key := visitExpr(&node.Key, fset, addLocs)
-	value := visitExpr(&node.Value, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("keyValueExpr(%s,%s,at=%s)", key, value, locationString)
-	} else {
-		return fmt.Sprintf("keyValueExpr(%s,%s)", key, value)
-	}
-}
-func visitArrayType(node *ast.ArrayType, fset *token.FileSet, addLocs bool) string {
-	lens := visitOptionExpr(&node.Len, fset, addLocs)
-	elt := visitExpr(&node.Elt, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("arrayType(%s,%s,at=%s)", lens, elt, locationString)
-	} else {
-		return fmt.Sprintf("arrayType(%s,%s)", lens, elt)
-	}
+	return fmt.Sprintf("unaryExpr(%s,%s%s)", x, tok, addKeywordParameters(node, fset, config))
 }
 
-func visitOptionBasicLiteral(literal *ast.BasicLit, fset *token.FileSet, addLocs bool) string {
+func visitBinaryExpr(node *ast.BinaryExpr, fset *token.FileSet, config *Config) string {
+	x := visitExpr(&node.X, fset, config)
+	tok := opToRascal(node.Op)
+	y := visitExpr(&node.Y, fset, config)
+	return fmt.Sprintf("binaryExpr(%s,%s,%s%s)", x, y, tok, addKeywordParameters(node, fset, config))
+}
+func visitKeyValueExpr(node *ast.KeyValueExpr, fset *token.FileSet, config *Config) string {
+	key := visitExpr(&node.Key, fset, config)
+	value := visitExpr(&node.Value, fset, config)
+	return fmt.Sprintf("keyValueExpr(%s,%s%s)", key, value, addKeywordParameters(node, fset, config))
+}
+func visitArrayType(node *ast.ArrayType, fset *token.FileSet, config *Config) string {
+	lens := visitOptionExpr(&node.Len, fset, config)
+	elt := visitExpr(&node.Elt, fset, config)
+	return fmt.Sprintf("arrayType(%s,%s%s)", lens, elt, addKeywordParameters(node, fset, config))
+}
+
+func visitOptionBasicLiteral(literal *ast.BasicLit, fset *token.FileSet, config *Config) string {
 	if literal == nil {
 		return "noLiteral()"
 	} else {
-		return fmt.Sprintf("someLiteral(%s)", literalToRascal(literal, fset, addLocs))
+		return fmt.Sprintf("someLiteral(%s)", literalToRascal(literal, fset, config))
 	}
 }
 
-func fieldToRascal(field *ast.Field, fset *token.FileSet, addLocs bool) string {
+func fieldToRascal(field *ast.Field, fset *token.FileSet, config *Config) string {
 	var names []string
 	for i := 0; field.Names != nil && i < len(field.Names); i++ {
 		names = append(names, fmt.Sprintf("\"%s\"", field.Names[i].Name))
 	}
 	namesStr := fmt.Sprintf("[%s]", strings.Join(names, ","))
-	fieldType := visitOptionExpr(&field.Type, fset, addLocs)
-	fieldTag := visitOptionBasicLiteral(field.Tag, fset, addLocs)
+	fieldType := visitOptionExpr(&field.Type, fset, config)
+	fieldTag := visitOptionBasicLiteral(field.Tag, fset, config)
 
-	if addLocs {
-		locationString := computeLocation(fset, field.Pos(), field.End())
-		return fmt.Sprintf("field(%s,%s,%s,at=%s)", namesStr, fieldType, fieldTag, locationString)
-	} else {
-		return fmt.Sprintf("field(%s,%s,%s)", namesStr, fieldType, fieldTag)
-	}
+	return fmt.Sprintf("field(%s,%s,%s%s)", namesStr, fieldType, fieldTag, addKeywordParameters(field, fset, config))
 }
 
-func visitFieldList(fieldList *ast.FieldList, fset *token.FileSet, addLocs bool) string {
+func visitFieldList(fieldList *ast.FieldList, fset *token.FileSet, config *Config) string {
 	var fields []string
 	for i := 0; fieldList != nil && i < len(fieldList.List); i++ {
-		fields = append(fields, fieldToRascal(fieldList.List[i], fset, addLocs))
+		fields = append(fields, fieldToRascal(fieldList.List[i], fset, config))
 	}
 	return fmt.Sprintf("[%s]", strings.Join(fields, ","))
 }
 
-func visitStructType(node *ast.StructType, fset *token.FileSet, addLocs bool) string {
-	fieldStr := visitFieldList(node.Fields, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("structType(%s,at=%s)", fieldStr, locationString)
-	} else {
-		return fmt.Sprintf("structType(%s)", fieldStr)
-	}
+func visitStructType(node *ast.StructType, fset *token.FileSet, config *Config) string {
+	fieldStr := visitFieldList(node.Fields, fset, config)
+	return fmt.Sprintf("structType(%s%s)", fieldStr, addKeywordParameters(node, fset, config))
 }
-func visitFuncType(node *ast.FuncType, fset *token.FileSet, addLocs bool) string {
-	typeParams := visitFieldList(node.TypeParams, fset, addLocs)
-	params := visitFieldList(node.Params, fset, addLocs)
-	returns := visitFieldList(node.Results, fset, addLocs)
+func visitFuncType(node *ast.FuncType, fset *token.FileSet, config *Config) string {
+	typeParams := visitFieldList(node.TypeParams, fset, config)
+	params := visitFieldList(node.Params, fset, config)
+	returns := visitFieldList(node.Results, fset, config)
 
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("funcType(%s,%s,%s,at=%s)", typeParams, params, returns, locationString)
-	} else {
-		return fmt.Sprintf("funcType(%s,%s,%s)", typeParams, params, returns)
-	}
+	return fmt.Sprintf("funcType(%s,%s,%s%s)", typeParams, params, returns, addKeywordParameters(node, fset, config))
 }
-func visitInterfaceType(node *ast.InterfaceType, fset *token.FileSet, addLocs bool) string {
-	methods := visitFieldList(node.Methods, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("interfaceType(%s,at=%s)", methods, locationString)
-	} else {
-		return fmt.Sprintf("interfaceType(%s)", methods)
-	}
+func visitInterfaceType(node *ast.InterfaceType, fset *token.FileSet, config *Config) string {
+	methods := visitFieldList(node.Methods, fset, config)
+	return fmt.Sprintf("interfaceType(%s%s)", methods, addKeywordParameters(node, fset, config))
 }
-func visitMapType(node *ast.MapType, fset *token.FileSet, addLocs bool) string {
-	key := visitExpr(&node.Key, fset, addLocs)
-	value := visitExpr(&node.Value, fset, addLocs)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("mapType(%s,%s,at=%s)", key, value, locationString)
-	} else {
-		return fmt.Sprintf("mapType(%s,%s)", key, value)
-	}
+func visitMapType(node *ast.MapType, fset *token.FileSet, config *Config) string {
+	key := visitExpr(&node.Key, fset, config)
+	value := visitExpr(&node.Value, fset, config)
+	return fmt.Sprintf("mapType(%s,%s%s)", key, value, addKeywordParameters(node, fset, config))
 }
 
 func channelDirToRascal(dir ast.ChanDir) string {
@@ -918,29 +751,24 @@ func channelDirToRascal(dir ast.ChanDir) string {
 	}
 }
 
-func visitChanType(node *ast.ChanType, fset *token.FileSet, addLocs bool) string {
-	value := visitExpr(&node.Value, fset, addLocs)
+func visitChanType(node *ast.ChanType, fset *token.FileSet, config *Config) string {
+	value := visitExpr(&node.Value, fset, config)
 	chanSend := channelDirToRascal(node.Dir)
-	if addLocs {
-		locationString := computeLocation(fset, node.Pos(), node.End())
-		return fmt.Sprintf("chanType(%s,%s,at=%s)", value, chanSend, locationString)
-	} else {
-		return fmt.Sprintf("chanType(%s,%s)", value, chanSend)
-	}
+	return fmt.Sprintf("chanType(%s,%s%s)", value, chanSend, addKeywordParameters(node, fset, config))
 }
 
-func visitExprList(nodes []ast.Expr, fset *token.FileSet, addLocs bool) string {
+func visitExprList(nodes []ast.Expr, fset *token.FileSet, config *Config) string {
 	var exprs []string
 	for i := 0; nodes != nil && i < len(nodes); i++ {
-		exprs = append(exprs, visitExpr(&nodes[i], fset, addLocs))
+		exprs = append(exprs, visitExpr(&nodes[i], fset, config))
 	}
 	return fmt.Sprintf("[%s]", strings.Join(exprs, ","))
 }
 
-func visitStmtList(nodes []ast.Stmt, fset *token.FileSet, addLocs bool) string {
+func visitStmtList(nodes []ast.Stmt, fset *token.FileSet, config *Config) string {
 	var stmts []string
 	for i := 0; nodes != nil && i < len(nodes); i++ {
-		stmts = append(stmts, visitStmt(&nodes[i], fset, addLocs))
+		stmts = append(stmts, visitStmt(&nodes[i], fset, config))
 	}
 
 	return fmt.Sprintf("[%s]", strings.Join(stmts, ","))
@@ -952,7 +780,7 @@ func computeLocation(fset *token.FileSet, start token.Pos, end token.Pos) string
 		startPos := fset.Position(start)
 		//endPos := fset.Position(end)
 		return fmt.Sprintf("|file://%s|(%d,%d)",
-			filePath, startPos.Offset, end-start)
+			fset.Position(start).Filename, startPos.Offset, end-start)
 		//startPos.Line, startPos.Column-1, endPos.Line, endPos.Column-1)
 	} else {
 		return fmt.Sprintf("|file://%s|", fset.Position(start).Filename)
@@ -1103,18 +931,29 @@ func rascalizeChar(input string) string {
 
 func main() {
 	flag.StringVar(&filePath, "filePath", "", "The file to be processed")
+	flag.StringVar(&projectPath, "projectPath", "", "The root of the project")
+	flag.StringVar(&scratchDir, "scratchDir", "", "The directory for temporary AST files")
 
 	var addLocations bool
 	flag.BoolVar(&addLocations, "addLocs", true, "Include location annotations")
+
+	var addTypes bool
+	flag.BoolVar(&addTypes, "addTypes", true, "Include type information")
 
 	var exprText string
 	flag.StringVar(&exprText, "expr", "", "The expression to parse")
 
 	flag.Parse()
 
-	if filePath != "" {
+	if projectPath != "" {
+		if scratchDir != "" {
+			fmt.Println(processProject(addLocations, addTypes))
+		} else {
+			fmt.Println("No scratch directory given for generated ASTs")
+		}
+	} else if filePath != "" {
 		//fmt.Printf("Processing file %s\n", filePath)
-		fmt.Println(processFile(addLocations))
+		fmt.Println(processFile(addLocations, addTypes))
 	} else if exprText != "" {
 		fmt.Println(processExpr(exprText))
 	} else {
