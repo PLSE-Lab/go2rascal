@@ -59,7 +59,7 @@ func processProject(addLocs bool, addTypes bool) string {
 	}
 
 	// Load the project, computing types and resolving dependencies
-	pkgs, err := packages.Load(cfg, projectPath)
+	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
 		return fmt.Sprintf("errorSystem(\"Could not load project at path %s, errors: %s\")", projectPath, err.Error())
 	}
