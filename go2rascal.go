@@ -51,12 +51,16 @@ func addKeywordParameters(node ast.Node, fset *token.FileSet, config *Config) st
 }
 
 // parses and type checks an entire project, returning a map of type-annotated AST nodes
-func processProject(addLocs bool, addTypes bool, includeTests bool) string {
+func processProject(addLocs bool, addTypes bool, includeTests bool, buildFlags string) string {
 	// We want type-annotated syntax for the files in the current project
 	cfg := &packages.Config{
 		Mode:  packages.LoadSyntax,
 		Dir:   projectPath,
 		Tests: includeTests,
+	}
+	// Add build flags if any were passed in
+	if len(buildFlags) > 0 {
+		cfg.BuildFlags = []string{"-tags=" + buildFlags}
 	}
 
 	// Load the project, computing types and resolving dependencies
@@ -181,9 +185,8 @@ func visitDeclaration(node *ast.Decl, fset *token.FileSet, config *Config) strin
 func optionalNameToRascal(node *ast.Ident) string {
 	if node != nil {
 		return fmt.Sprintf("someName(\"%s\")", node.Name)
-	} else {
-		return "noName()"
 	}
+	return "noName()"
 }
 
 func visitSpec(node *ast.Spec, fset *token.FileSet, config *Config) string {
@@ -213,14 +216,12 @@ func visitValueSpec(node *ast.ValueSpec, fset *token.FileSet, config *Config) st
 	namesStr := fmt.Sprintf("[%s]", strings.Join(names, ","))
 	typeStr := visitOptionExpr(&node.Type, fset, config)
 	values := visitExprList(node.Values, fset, config)
-
 	return fmt.Sprintf("valueSpec(%s,%s,%s%s)", namesStr, typeStr, values, addKeywordParameters(node, fset, config))
 }
 
 func visitTypeSpec(node *ast.TypeSpec, fset *token.FileSet, config *Config) string {
 	typeParams := visitFieldList(node.TypeParams, fset, config)
 	typeStr := visitExpr(&node.Type, fset, config)
-
 	return fmt.Sprintf("typeSpec(\"%s\",%s,%s%s)", node.Name.Name, typeParams, typeStr, addKeywordParameters(node, fset, config))
 }
 
@@ -295,22 +296,20 @@ func visitStmt(node *ast.Stmt, fset *token.FileSet, config *Config) string {
 func visitOptionStmt(node *ast.Stmt, fset *token.FileSet, config *Config) string {
 	if *node == nil {
 		return "noStmt()"
-	} else {
-		return fmt.Sprintf("someStmt(%s)", visitStmt(node, fset, config))
 	}
+	return fmt.Sprintf("someStmt(%s)", visitStmt(node, fset, config))
 }
 
 func visitOptionExpr(node *ast.Expr, fset *token.FileSet, config *Config) string {
 	if *node == nil {
 		return "noExpr()"
-	} else {
-		return fmt.Sprintf("someExpr(%s)", visitExpr(node, fset, config))
 	}
+	return fmt.Sprintf("someExpr(%s)", visitExpr(node, fset, config))
 }
 
 func visitDeclStmt(node *ast.DeclStmt, fset *token.FileSet, config *Config) string {
 	declStr := visitDeclaration(&node.Decl, fset, config)
-	return fmt.Sprintf("declStmt(%s)", declStr, addKeywordParameters(node, fset, config))
+	return fmt.Sprintf("declStmt(%s%s)", declStr, addKeywordParameters(node, fset, config))
 }
 
 func visitEmptyStmt(node *ast.EmptyStmt, fset *token.FileSet, config *Config) string {
@@ -337,7 +336,6 @@ func visitSendStmt(node *ast.SendStmt, fset *token.FileSet, config *Config) stri
 func visitIncDecStmt(node *ast.IncDecStmt, fset *token.FileSet, config *Config) string {
 	opStr := opToRascal(node.Tok)
 	exprStr := visitExpr(&node.X, fset, config)
-
 	return fmt.Sprintf("incDecStmt(%s,%s%s)", opStr, exprStr, addKeywordParameters(node, fset, config))
 }
 
@@ -372,9 +370,8 @@ func visitBranchStmt(node *ast.BranchStmt, fset *token.FileSet, config *Config) 
 func visitOptionalBlockStmt(node *ast.BlockStmt, fset *token.FileSet, config *Config) string {
 	if node == nil {
 		return "noStmt()"
-	} else {
-		return fmt.Sprintf("someStmt(%s)", visitBlockStmt(node, fset, config))
 	}
+	return fmt.Sprintf("someStmt(%s)", visitBlockStmt(node, fset, config))
 }
 
 func visitBlockStmt(node *ast.BlockStmt, fset *token.FileSet, config *Config) string {
@@ -393,15 +390,13 @@ func visitIfStmt(node *ast.IfStmt, fset *token.FileSet, config *Config) string {
 func caseToRascal(nodes []ast.Expr, fset *token.FileSet, config *Config) string {
 	if nodes != nil {
 		return fmt.Sprintf("regularCase(%s)", visitExprList(nodes, fset, config))
-	} else {
-		return "defaultCase()"
 	}
+	return "defaultCase()"
 }
 
 func visitCaseClause(node *ast.CaseClause, fset *token.FileSet, config *Config) string {
 	caseStr := caseToRascal(node.List, fset, config)
 	stmtsString := visitStmtList(node.Body, fset, config)
-
 	return fmt.Sprintf("caseClause(%s,%s%s)", caseStr, stmtsString, addKeywordParameters(node, fset, config))
 }
 
@@ -435,15 +430,13 @@ func visitTypeSwitchStmt(node *ast.TypeSwitchStmt, fset *token.FileSet, config *
 func clauseToRascal(node *ast.Stmt, fset *token.FileSet, config *Config) string {
 	if *node == nil {
 		return "defaultComm()"
-	} else {
-		return fmt.Sprintf("regularComm(%s)", visitStmt(node, fset, config))
 	}
+	return fmt.Sprintf("regularComm(%s)", visitStmt(node, fset, config))
 }
 
 func visitCommClause(node *ast.CommClause, fset *token.FileSet, config *Config) string {
 	clauseStr := clauseToRascal(&node.Comm, fset, config)
 	stmtsString := visitStmtList(node.Body, fset, config)
-
 	return fmt.Sprintf("commClause(%s,%s%s)", clauseStr, stmtsString, addKeywordParameters(node, fset, config))
 }
 
@@ -560,6 +553,7 @@ func visitIdent(node *ast.Ident, fset *token.FileSet, config *Config) string {
 	name := node.Name
 	return fmt.Sprintf("ident(\"%s\"%s)", name, addKeywordParameters(node, fset, config))
 }
+
 func visitEllipsis(node *ast.Ellipsis, fset *token.FileSet, config *Config) string {
 	elt := visitOptionExpr(&node.Elt, fset, config)
 	return fmt.Sprintf("ellipsis(%s%s)", elt, addKeywordParameters(node, fset, config))
@@ -579,15 +573,13 @@ func literalToRascal(node *ast.BasicLit, fset *token.FileSet, config *Config) st
 			// is coerced into a float in that case, but cannot be represented as either
 			// an int32 or an int64.
 			return fmt.Sprintf("literalFloat(%f%s)", parsed, addKeywordParameters(node, fset, config))
-		} else {
-			return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 		}
+		return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 	case token.FLOAT:
 		if parsed, err := strconv.ParseFloat(node.Value, 64); err == nil {
 			return fmt.Sprintf("literalFloat(%f)%s", parsed, addKeywordParameters(node, fset, config))
-		} else {
-			return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 		}
+		return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 	case token.CHAR:
 		return fmt.Sprintf("literalChar(%s%s)", rascalizeChar(node.Value), addKeywordParameters(node, fset, config))
 	case token.STRING:
@@ -595,9 +587,8 @@ func literalToRascal(node *ast.BasicLit, fset *token.FileSet, config *Config) st
 	case token.IMAG:
 		if ic, err := strconv.ParseComplex(node.Value, 128); err == nil {
 			return fmt.Sprintf("literalImaginary(%f,%f%s)", real(ic), imag(ic), addKeywordParameters(node, fset, config))
-		} else {
-			return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 		}
+		return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 	default:
 		return fmt.Sprintf("unknownLiteral(\"%s\"%s)", node.Value, addKeywordParameters(node, fset, config))
 	}
@@ -613,17 +604,17 @@ func visitFuncLit(node *ast.FuncLit, fset *token.FileSet, config *Config) string
 	body := visitBlockStmt(node.Body, fset, config)
 	return fmt.Sprintf("funcLit(%s,%s%s)", typeStr, body, addKeywordParameters(node, fset, config))
 }
+
 func boolToRascal(val bool) string {
 	if val {
 		return "true"
-	} else {
-		return "false"
 	}
+	return "false"
 }
+
 func visitCompositeLit(node *ast.CompositeLit, fset *token.FileSet, config *Config) string {
 	typeStr := visitOptionExpr(&node.Type, fset, config)
 	elts := visitExprList(node.Elts, fset, config)
-
 	return fmt.Sprintf("compositeLit(%s,%s,%s%s)", typeStr, elts, boolToRascal(node.Incomplete), addKeywordParameters(node, fset, config))
 }
 
@@ -636,16 +627,19 @@ func visitSelectorExpr(node *ast.SelectorExpr, fset *token.FileSet, config *Conf
 	exprStr := visitExpr(&node.X, fset, config)
 	return fmt.Sprintf("selectorExpr(%s,\"%s\"%s)", exprStr, node.Sel.Name, addKeywordParameters(node, fset, config))
 }
+
 func visitIndexExpr(node *ast.IndexExpr, fset *token.FileSet, config *Config) string {
 	x := visitExpr(&node.X, fset, config)
 	index := visitExpr(&node.Index, fset, config)
 	return fmt.Sprintf("indexExpr(%s,%s%s)", x, index, addKeywordParameters(node, fset, config))
 }
+
 func visitIndexListExpr(node *ast.IndexListExpr, fset *token.FileSet, config *Config) string {
 	x := visitExpr(&node.X, fset, config)
 	indices := visitExprList(node.Indices, fset, config)
 	return fmt.Sprintf("indexListExpr(%s,%s%s)", x, indices, addKeywordParameters(node, fset, config))
 }
+
 func visitSliceExpr(node *ast.SliceExpr, fset *token.FileSet, config *Config) string {
 	x := visitExpr(&node.X, fset, config)
 	low := visitOptionExpr(&node.Low, fset, config)
@@ -653,21 +647,25 @@ func visitSliceExpr(node *ast.SliceExpr, fset *token.FileSet, config *Config) st
 	maxnum := visitOptionExpr(&node.Max, fset, config)
 	return fmt.Sprintf("sliceExpr(%s,%s,%s,%s,%s%s)", x, low, high, maxnum, boolToRascal(node.Slice3), addKeywordParameters(node, fset, config))
 }
+
 func visitTypeAssertExpr(node *ast.TypeAssertExpr, fset *token.FileSet, config *Config) string {
 	x := visitExpr(&node.X, fset, config)
 	exprTypes := visitOptionExpr(&node.Type, fset, config)
 	return fmt.Sprintf("typeAssertExpr(%s,%s%s)", x, exprTypes, addKeywordParameters(node, fset, config))
 }
+
 func visitCallExpr(node *ast.CallExpr, fset *token.FileSet, config *Config) string {
 	fun := visitExpr(&node.Fun, fset, config)
 	args := visitExprList(node.Args, fset, config)
 	hasEllipses := boolToRascal(node.Ellipsis != token.NoPos)
 	return fmt.Sprintf("callExpr(%s,%s,%s%s)", fun, args, hasEllipses, addKeywordParameters(node, fset, config))
 }
+
 func visitStarExpr(node *ast.StarExpr, fset *token.FileSet, config *Config) string {
 	x := visitExpr(&node.X, fset, config)
 	return fmt.Sprintf("starExpr(%s%s)", x, addKeywordParameters(node, fset, config))
 }
+
 func visitUnaryExpr(node *ast.UnaryExpr, fset *token.FileSet, config *Config) string {
 	x := visitExpr(&node.X, fset, config)
 	tok := opToRascal(node.Op)
@@ -680,11 +678,13 @@ func visitBinaryExpr(node *ast.BinaryExpr, fset *token.FileSet, config *Config) 
 	y := visitExpr(&node.Y, fset, config)
 	return fmt.Sprintf("binaryExpr(%s,%s,%s%s)", x, y, tok, addKeywordParameters(node, fset, config))
 }
+
 func visitKeyValueExpr(node *ast.KeyValueExpr, fset *token.FileSet, config *Config) string {
 	key := visitExpr(&node.Key, fset, config)
 	value := visitExpr(&node.Value, fset, config)
 	return fmt.Sprintf("keyValueExpr(%s,%s%s)", key, value, addKeywordParameters(node, fset, config))
 }
+
 func visitArrayType(node *ast.ArrayType, fset *token.FileSet, config *Config) string {
 	lens := visitOptionExpr(&node.Len, fset, config)
 	elt := visitExpr(&node.Elt, fset, config)
@@ -694,9 +694,8 @@ func visitArrayType(node *ast.ArrayType, fset *token.FileSet, config *Config) st
 func visitOptionBasicLiteral(literal *ast.BasicLit, fset *token.FileSet, config *Config) string {
 	if literal == nil {
 		return "noLiteral()"
-	} else {
-		return fmt.Sprintf("someLiteral(%s)", literalToRascal(literal, fset, config))
 	}
+	return fmt.Sprintf("someLiteral(%s)", literalToRascal(literal, fset, config))
 }
 
 func fieldToRascal(field *ast.Field, fset *token.FileSet, config *Config) string {
@@ -707,7 +706,6 @@ func fieldToRascal(field *ast.Field, fset *token.FileSet, config *Config) string
 	namesStr := fmt.Sprintf("[%s]", strings.Join(names, ","))
 	fieldType := visitOptionExpr(&field.Type, fset, config)
 	fieldTag := visitOptionBasicLiteral(field.Tag, fset, config)
-
 	return fmt.Sprintf("field(%s,%s,%s%s)", namesStr, fieldType, fieldTag, addKeywordParameters(field, fset, config))
 }
 
@@ -723,17 +721,19 @@ func visitStructType(node *ast.StructType, fset *token.FileSet, config *Config) 
 	fieldStr := visitFieldList(node.Fields, fset, config)
 	return fmt.Sprintf("structType(%s%s)", fieldStr, addKeywordParameters(node, fset, config))
 }
+
 func visitFuncType(node *ast.FuncType, fset *token.FileSet, config *Config) string {
 	typeParams := visitFieldList(node.TypeParams, fset, config)
 	params := visitFieldList(node.Params, fset, config)
 	returns := visitFieldList(node.Results, fset, config)
-
 	return fmt.Sprintf("funcType(%s,%s,%s%s)", typeParams, params, returns, addKeywordParameters(node, fset, config))
 }
+
 func visitInterfaceType(node *ast.InterfaceType, fset *token.FileSet, config *Config) string {
 	methods := visitFieldList(node.Methods, fset, config)
 	return fmt.Sprintf("interfaceType(%s%s)", methods, addKeywordParameters(node, fset, config))
 }
+
 func visitMapType(node *ast.MapType, fset *token.FileSet, config *Config) string {
 	key := visitExpr(&node.Key, fset, config)
 	value := visitExpr(&node.Value, fset, config)
@@ -747,9 +747,8 @@ func channelDirToRascal(dir ast.ChanDir) string {
 		return "send()"
 	} else if dir&ast.RECV == ast.RECV {
 		return "receive()"
-	} else {
-		return "unknown()"
 	}
+	return "unknown()"
 }
 
 func visitChanType(node *ast.ChanType, fset *token.FileSet, config *Config) string {
@@ -771,7 +770,6 @@ func visitStmtList(nodes []ast.Stmt, fset *token.FileSet, config *Config) string
 	for i := 0; nodes != nil && i < len(nodes); i++ {
 		stmts = append(stmts, visitStmt(&nodes[i], fset, config))
 	}
-
 	return fmt.Sprintf("[%s]", strings.Join(stmts, ","))
 }
 
@@ -783,9 +781,8 @@ func computeLocation(fset *token.FileSet, start token.Pos, end token.Pos) string
 		return fmt.Sprintf("|file://%s|(%d,%d)",
 			fset.Position(start).Filename, startPos.Offset, end-start)
 		//startPos.Line, startPos.Column-1, endPos.Line, endPos.Column-1)
-	} else {
-		return fmt.Sprintf("|file://%s|", fset.Position(start).Filename)
 	}
+	return fmt.Sprintf("|file://%s|", fset.Position(start).Filename)
 }
 
 func opToRascal(node token.Token) string {
@@ -911,9 +908,8 @@ func declTypeToRascal(node token.Token) string {
 func labelToRascal(node *ast.Ident) string {
 	if node != nil {
 		return fmt.Sprintf("someLabel(\"%s\")", node.Name)
-	} else {
-		return "noLabel()"
 	}
+	return "noLabel()"
 }
 
 func rascalizeString(input string) string {
@@ -944,6 +940,9 @@ func main() {
 	var includeTests bool
 	flag.BoolVar(&includeTests, "includeTests", false, "Include test files")
 
+	var buildFlags string
+	flag.StringVar(&buildFlags, "buildFlags", "", "Build flags used during checking")
+
 	var exprText string
 	flag.StringVar(&exprText, "expr", "", "The expression to parse")
 
@@ -951,7 +950,7 @@ func main() {
 
 	if projectPath != "" {
 		if scratchDir != "" {
-			fmt.Println(processProject(addLocations, addTypes, includeTests))
+			fmt.Println(processProject(addLocations, addTypes, includeTests, buildFlags))
 		} else {
 			fmt.Println("No scratch directory given for generated ASTs")
 		}
