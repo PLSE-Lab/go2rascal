@@ -8,9 +8,11 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -44,8 +46,8 @@ func addKeywordParameters(node ast.Node, fset *token.FileSet, config *Config) st
 		}
 	}
 
-	for key, value := range params {
-		res = res + fmt.Sprintf(", %s=%s", key, value)
+	for _, key := range slices.Sorted(maps.Keys(params)) {
+		res = res + fmt.Sprintf(", %s=%s", key, params[key])
 	}
 	return res
 }
@@ -80,6 +82,8 @@ func processProject(addLocs bool, addTypes bool, includeTests bool, buildFlags s
 	// Generate Rascal terms for the files in the project package, saving
 	// them each into a separate file in the scratch directory
 	var files = make(map[string]string)
+	var processed = make(map[string]bool)
+
 	counter := 0
 	for _, pkg := range pkgs {
 		config := &Config{
@@ -88,6 +92,15 @@ func processProject(addLocs bool, addTypes bool, includeTests bool, buildFlags s
 			info:     pkg.TypesInfo,
 		}
 		for _, file := range pkg.Syntax {
+			// Check to see if we have processed this file already. This can happen when
+			// includeTests is true since each package is processed twice, once with tests
+			// enabled and once with them disabled.
+			filename := pkg.Fset.Position(file.Pos()).Filename
+			if processed[filename] {
+				continue
+			}
+			processed[filename] = true
+
 			// Visit each file in the project/package
 			fileAst := visitFile(file, pkg.Fset, config)
 			filePath := filepath.Join(scratchDir, fmt.Sprintf("go-ast_%d.ast", counter))
@@ -95,7 +108,7 @@ func processProject(addLocs bool, addTypes bool, includeTests bool, buildFlags s
 			if err := os.WriteFile(filePath, []byte(fileAst), 0644); err != nil {
 				panic(err)
 			}
-			files[fmt.Sprintf("|file://%s|", pkg.Fset.Position(file.Pos()).Filename)] =
+			files[fmt.Sprintf("|file://%s|", filename)] =
 				fmt.Sprintf("|file://%s|", filePath)
 		}
 	}
