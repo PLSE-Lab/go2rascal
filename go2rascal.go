@@ -60,7 +60,7 @@ func processProject(addLocs bool, addTypes bool, includeTests bool, buildFlags s
 		Dir:   projectPath,
 		Tests: includeTests,
 		Env:   append(os.Environ(), "GOWORK=off"),
-		Logf:  func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
+		//Logf:  func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
 	}
 	// Add build flags if any were passed in
 	if len(buildFlags) > 0 {
