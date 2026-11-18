@@ -56,13 +56,17 @@ func addKeywordParameters(node ast.Node, fset *token.FileSet, config *Config) st
 func processProject(addLocs bool, addTypes bool, includeTests bool, buildFlags string) string {
 	// We want type-annotated syntax for the files in the current project
 	cfg := &packages.Config{
-		Mode:  packages.LoadSyntax,
+		Mode:  packages.LoadSyntax | packages.NeedModule,
 		Dir:   projectPath,
 		Tests: includeTests,
+		Env:   append(os.Environ(), "GOWORK=off"),
+		Logf:  func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
 	}
 	// Add build flags if any were passed in
 	if len(buildFlags) > 0 {
-		cfg.BuildFlags = []string{"-tags=" + buildFlags}
+		cfg.BuildFlags = []string{"-mod=mod", "-tags=" + buildFlags}
+	} else {
+		cfg.BuildFlags = []string{"-mod=mod"}
 	}
 
 	// Load the project, computing types and resolving dependencies
@@ -77,6 +81,12 @@ func processProject(addLocs bool, addTypes bool, includeTests bool, buildFlags s
 	}
 	if err := os.MkdirAll(scratchDir, 0700); err != nil {
 		panic(err)
+	}
+
+	// Get the name of the module; just use the empty string if there is no name
+	var moduleName = ""
+	if len(pkgs) > 0 && pkgs[0].Module != nil {
+		moduleName = pkgs[0].Module.Path
 	}
 
 	// Generate Rascal terms for the files in the project package, saving
@@ -119,7 +129,7 @@ func processProject(addLocs bool, addTypes bool, includeTests bool, buildFlags s
 	for k, v := range files {
 		filelist = append(filelist, fmt.Sprintf("%s : %s", k, v))
 	}
-	return fmt.Sprintf("(%s)", strings.Join(filelist, ", "))
+	return fmt.Sprintf("< \"%s\", (%s) >", moduleName, strings.Join(filelist, ", "))
 }
 
 // parses file and makes sure there is no error in file input.
